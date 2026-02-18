@@ -10,22 +10,26 @@
     "twoFactorSkipCheckbox": "#authSkipFlg"
   },
   "navigation": {
-    "_description": "トップページからの遷移リンク",
+    "_description": "トップページからの遷移リンク。ComSubmit(document.forms[0], url) で遷移する。",
     "topPage": "Ascsc1010InitAction.do",
     "priceManagement": "Ascsc5010InitAction.do",
+    "calendarSettings": "Ascsc6800InitAction.do",
     "calendarBulkCopy": "doLink('0','1','DD')",
     "calendarList": "doLink('1','0','')"
   },
   "facilitySwitch": {
+    "_description": "autocomplete 選択でフォーム自動送信。二重ログインエラー(MASC1042)時は再選択で強制切替。",
     "openButton": "a.cFormTextBtn3Switch",
     "searchInput": "input.cFormTextInputSwitch",
     "hiddenFacilityId": "#changeLincolnInnId",
-    "selectItem": "TBD",
-    "confirmButton": "TBD"
+    "selectItem": "ul.ui-autocomplete li a",
+    "switchFormName": "Ascsc1010SwitchForm",
+    "switchAction": "Ascsc1010SwitchAction.do",
+    "doubleLoginErrorCode": "MASC1042"
   },
   "step0": {
-    "_description": "処理0: コピー元カレンダーへランク反映（カレンダーDOM）",
-    "_source": "参考リポジトリ https://github.com/Travel-Connect/lincoln 由来 — 実環境確認要",
+    "_description": "処理0: コピー元カレンダーへランク反映（6800 detail カレンダーDOM）",
+    "_source": "実環境にて確認済み（2026-02-18）",
     "monthTables": "table.calendarTable",
     "dayInCell": ".calendar_table_day",
     "rankText": ".calendarTableRank",
@@ -35,8 +39,18 @@
     "defaultInputPriceRankCd": "input[name=\"defaultInputPriceRankCd\"]",
     "inputPriceRankNm": "input[name=\"inputPriceRankNm\"]",
     "inputRankStyleText": "input[name=\"inputRankStyleText\"]",
-    "calendarNameInput": "TBD",
-    "saveButton": "TBD"
+    "calendarNameInput": "input#mstCalendarNm",
+    "saveButton": "a[onclick=\"doUpdate()\"]",
+    "copyCalendarButton": "a[onclick=\"doCopyCalendar()\"]",
+    "periodRedrawButton": "a[onclick=\"doPeriodRedraw()\"]",
+    "copySearchKeyWord": "input#searchKeyWord",
+    "calendarListItem": "a[onclick*=\"doDetail\"]",
+    "periodFromYear": "select[name=\"targetFromYear\"]",
+    "periodFromMonth": "select[name=\"targetFromMonth\"]",
+    "periodFromDay": "select[name=\"targetFromDay\"]",
+    "periodToYear": "select[name=\"targetToYear\"]",
+    "periodToMonth": "select[name=\"targetToMonth\"]",
+    "periodToDay": "select[name=\"targetToDay\"]"
   },
   "stepA": {
     "_description": "処理A: コピー元カレンダー設定（施設ID一致チェック, 6800 detail）",
@@ -44,11 +58,16 @@
   },
   "stepB": {
     "_description": "処理B: 料金ランク一括設定（5050）",
-    "autoCompleteInput": "TBD",
+    "autoCompleteInput": "input#copyPlanGrpName",
     "copyButton": "a[onclick=\"doCopy()\"]",
+    "sendCloseButton": "a[onclick=\"doSend(false);\"]",
     "sendContinueButton": "a[onclick=\"doSend(true);\"]",
+    "closeButton": "a[onclick=\"doClose()\"]",
     "autoCompleteList": "ul#ui-id-1",
-    "autoCompleteItem": "ul#ui-id-1 li.ui-menu-item a"
+    "autoCompleteItem": "ul#ui-id-1 li.ui-menu-item a",
+    "planGroupSetItem": "a[onclick*=\"selectPlanGroupSet\"]",
+    "planGroupSearchBtn": "#sectionTableSearchBtn3",
+    "planGroupSearchInput": "input#planGrpNmSearchText"
   },
   "stepC": {
     "_description": "処理C: 出力→突合検証（5070）",
@@ -60,10 +79,12 @@
     "toDay": "select[name=\"objectDateToDay\"]",
     "searchButton": "a[onclick=\"doSearch();\"]",
     "planGroupPickerButton": "#sectionTableBtn3",
+    "planGroupSetItem": "a[onclick*=\"selectPlanGroupSet\"]",
+    "planGroupSelect": "select#sectionTableSelect",
     "outputButton": "a[onclick=\"doOutput();\"]",
+    "rankOnlyCheckbox": "input#sectionBoxBodyListItem[name=rankLimit]",
     "rankOnlyHidden": "#hid_sectionBoxBodyListItem",
-    "rankOnlyToggle": "TBD",
-    "planGroupList": "TBD",
-    "planGroupConfirm": "TBD"
+    "excludeExpiredCheckbox": "input[name=excludeExpiredPlanGrpCheckBox]",
+    "outputRestrictionCheckbox": "input#outputRestriction"
   }
 }
