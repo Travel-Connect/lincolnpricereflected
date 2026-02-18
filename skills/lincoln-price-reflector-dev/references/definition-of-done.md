@@ -21,17 +21,18 @@
 - [ ] RankMatrix 構造体に変換完了
 - [ ] 異常値・欠損の検出と処理
 
-### STEP0（カレンダー DOM 更新）
-- [ ] page.evaluate で DOM 更新が実行された
-- [ ] inputPriceRankCd / inputPriceRankNm / inputRankStyleText が更新された
-- [ ] 保存が成功した（保存ボタンセレクタ TBD のためガード停止も可）
-
 ### STEPA（施設 ID チェック）
 - [ ] `dl.g_header_id dd` から施設 ID を取得
 - [ ] 期待する施設 ID と完全一致
 - [ ] 不一致なら FAILED で即停止
 
+### STEP0（カレンダー DOM 更新）
+- [ ] page.evaluate で DOM 更新が実行された
+- [ ] inputPriceRankCd / inputPriceRankNm / inputRankStyleText が更新された
+- [ ] 保存が成功した
+
 ### STEPB（一括コピー）
+- [ ] 施設ID再チェック（verifyFacilityId）が実行され一致を確認
 - [ ] 全対象カレンダーへコピー→送信継続が完了
 - [ ] 各操作後のレスポンス確認
 
@@ -50,6 +51,6 @@
 ## プロジェクト完了条件（M6: 運用開始）
 
 - [ ] 全 Phase の PR がマージ済み
-- [ ] E2E パイプライン（処理 0→A→B→C）通し実行で SUCCESS
+- [ ] E2E パイプライン（処理 A→0→B→C）通し実行で SUCCESS
 - [ ] ジョブ resume テスト合格
 - [ ] 運用ドキュメント完備

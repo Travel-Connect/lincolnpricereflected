@@ -4,14 +4,14 @@
 -- ============================================================
 -- jobs (ジョブ管理)
 -- ============================================================
-CREATE TABLE jobs (
+CREATE TABLE lincoln.jobs (
   id                  UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  facility_id         UUID        NOT NULL REFERENCES facilities(id),
+  facility_id         UUID        NOT NULL REFERENCES lincoln.facilities(id),
   status              TEXT        NOT NULL DEFAULT 'PENDING'
     CHECK (status IN ('PENDING','RUNNING','SUCCESS','FAILED','CANCELLED')),
   last_completed_step TEXT
     CHECK (last_completed_step IS NULL
-        OR last_completed_step IN ('PARSE','STEP0','STEPA','STEPB','STEPC','DONE')),
+        OR last_completed_step IN ('PARSE','STEPA','STEP0','STEPB','STEPC','DONE')),
   excel_file_path     TEXT,
   excel_original_name TEXT,
   stay_type           TEXT
@@ -25,25 +25,25 @@ CREATE TABLE jobs (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_jobs_facility_id ON jobs (facility_id);
-CREATE INDEX idx_jobs_status      ON jobs (status);
-CREATE INDEX idx_jobs_created_at  ON jobs (created_at DESC);
+CREATE INDEX idx_jobs_facility_id ON lincoln.jobs (facility_id);
+CREATE INDEX idx_jobs_status      ON lincoln.jobs (status);
+CREATE INDEX idx_jobs_created_at  ON lincoln.jobs (created_at DESC);
 
 CREATE TRIGGER set_jobs_updated_at
-  BEFORE UPDATE ON jobs
+  BEFORE UPDATE ON lincoln.jobs
   FOR EACH ROW
-  EXECUTE FUNCTION update_updated_at_column();
+  EXECUTE FUNCTION lincoln.update_updated_at_column();
 
-COMMENT ON TABLE jobs IS 'ジョブ管理 — Excel パース→反映→検証の実行単位';
+COMMENT ON TABLE lincoln.jobs IS 'ジョブ管理 — Excel パース→反映→検証の実行単位';
 
 -- ============================================================
 -- job_steps (ステップ実行ログ)
 -- ============================================================
-CREATE TABLE job_steps (
+CREATE TABLE lincoln.job_steps (
   id            UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  job_id        UUID        NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  job_id        UUID        NOT NULL REFERENCES lincoln.jobs(id) ON DELETE CASCADE,
   step          TEXT        NOT NULL
-    CHECK (step IN ('PARSE','STEP0','STEPA','STEPB','STEPC')),
+    CHECK (step IN ('PARSE','STEPA','STEP0','STEPB','STEPC')),
   status        TEXT        NOT NULL DEFAULT 'PENDING'
     CHECK (status IN ('PENDING','RUNNING','SUCCESS','FAILED')),
   attempt       INTEGER     NOT NULL DEFAULT 1,
@@ -53,16 +53,16 @@ CREATE TABLE job_steps (
   metadata_json JSONB
 );
 
-CREATE INDEX idx_job_steps_job_id ON job_steps (job_id);
+CREATE INDEX idx_job_steps_job_id ON lincoln.job_steps (job_id);
 
-COMMENT ON TABLE job_steps IS 'ステップ実行ログ — 各ステップの状態・試行回数を記録';
+COMMENT ON TABLE lincoln.job_steps IS 'ステップ実行ログ — 各ステップの状態・試行回数を記録';
 
 -- ============================================================
 -- artifacts (成果物・エビデンス)
 -- ============================================================
-CREATE TABLE artifacts (
+CREATE TABLE lincoln.artifacts (
   id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-  job_id       UUID        NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+  job_id       UUID        NOT NULL REFERENCES lincoln.jobs(id) ON DELETE CASCADE,
   step         TEXT        NOT NULL,
   type         TEXT        NOT NULL
     CHECK (type IN ('screenshot','html','network_log','verification_csv')),
@@ -70,28 +70,28 @@ CREATE TABLE artifacts (
   created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_artifacts_job_id ON artifacts (job_id);
+CREATE INDEX idx_artifacts_job_id ON lincoln.artifacts (job_id);
 
-COMMENT ON TABLE artifacts IS '成果物 — スクショ・HTML・ネットワークログ・検証結果を保存';
+COMMENT ON TABLE lincoln.artifacts IS '成果物 — スクショ・HTML・ネットワークログ・検証結果を保存';
 
 -- ============================================================
 -- RLS
 -- ============================================================
-ALTER TABLE jobs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE job_steps ENABLE ROW LEVEL SECURITY;
-ALTER TABLE artifacts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lincoln.jobs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lincoln.job_steps ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lincoln.artifacts ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY "authenticated read jobs"
-  ON jobs FOR SELECT TO authenticated USING (true);
+  ON lincoln.jobs FOR SELECT TO authenticated USING (true);
 CREATE POLICY "service_role all jobs"
-  ON jobs FOR ALL TO service_role USING (true) WITH CHECK (true);
+  ON lincoln.jobs FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "authenticated read job_steps"
-  ON job_steps FOR SELECT TO authenticated USING (true);
+  ON lincoln.job_steps FOR SELECT TO authenticated USING (true);
 CREATE POLICY "service_role all job_steps"
-  ON job_steps FOR ALL TO service_role USING (true) WITH CHECK (true);
+  ON lincoln.job_steps FOR ALL TO service_role USING (true) WITH CHECK (true);
 
 CREATE POLICY "authenticated read artifacts"
-  ON artifacts FOR SELECT TO authenticated USING (true);
+  ON lincoln.artifacts FOR SELECT TO authenticated USING (true);
 CREATE POLICY "service_role all artifacts"
-  ON artifacts FOR ALL TO service_role USING (true) WITH CHECK (true);
+  ON lincoln.artifacts FOR ALL TO service_role USING (true) WITH CHECK (true);

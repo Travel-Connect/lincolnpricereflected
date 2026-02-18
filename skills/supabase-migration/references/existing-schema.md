@@ -1,15 +1,21 @@
 # 既存スキーマ一覧
 
 現在のマイグレーションファイルで定義されているテーブル・バケットの一覧。
+**全テーブルは `lincoln` スキーマに格納**（OTAlogin の `public` スキーマと分離）。
+
+## スキーマ
+
+- `lincoln` — Lincoln Price Reflected 専用スキーマ
+- `public` — OTAlogin 用（既存、触らない）
 
 ## マイグレーションファイル
 
 | ファイル | 内容 |
 |---------|------|
-| `20260218000001_facilities.sql` | facilities, facility_aliases, update_updated_at_column() |
+| `20260218000001_facilities.sql` | lincoln スキーマ作成, facilities, facility_aliases, update_updated_at_column() |
 | `20260218000002_jobs.sql` | jobs, job_steps, artifacts |
 | `20260218000003_plans.sql` | plan_groups, plans, job_expected_ranks |
-| `20260218000004_storage.sql` | Storage バケット (excel-uploads, artifacts) |
+| `20260218000004_storage.sql` | Storage バケット (lincoln-excel-uploads, lincoln-artifacts) |
 
 ## テーブル構造
 
@@ -42,7 +48,7 @@ UNIQUE(facility_id, alias)
 | id | UUID | PK |
 | facility_id | UUID | FK → facilities(id) NOT NULL |
 | status | TEXT | NOT NULL DEFAULT 'PENDING', CHECK (PENDING\|RUNNING\|SUCCESS\|FAILED\|CANCELLED) |
-| last_completed_step | TEXT | CHECK (NULL\|PARSE\|STEP0\|STEPA\|STEPB\|STEPC\|DONE) |
+| last_completed_step | TEXT | CHECK (NULL\|PARSE\|STEPA\|STEP0\|STEPB\|STEPC\|DONE) |
 | excel_file_path | TEXT | |
 | excel_original_name | TEXT | |
 | stay_type | TEXT | CHECK (NULL\|A\|B) |
@@ -60,7 +66,7 @@ UNIQUE(facility_id, alias)
 |--------|-----|------|
 | id | UUID | PK |
 | job_id | UUID | FK → jobs(id) ON DELETE CASCADE NOT NULL |
-| step | TEXT | NOT NULL, CHECK (PARSE\|STEP0\|STEPA\|STEPB\|STEPC) |
+| step | TEXT | NOT NULL, CHECK (PARSE\|STEPA\|STEP0\|STEPB\|STEPC) |
 | status | TEXT | NOT NULL DEFAULT 'PENDING', CHECK (PENDING\|RUNNING\|SUCCESS\|FAILED) |
 | attempt | INTEGER | NOT NULL DEFAULT 1 |
 | started_at | TIMESTAMPTZ | |
@@ -114,8 +120,8 @@ UNIQUE(facility_id, alias)
 
 | バケット | public | 用途 |
 |---------|--------|------|
-| excel-uploads | false | Excel アップロード |
-| artifacts | false | スクショ・ログ等の成果物 |
+| lincoln-excel-uploads | false | Excel アップロード |
+| lincoln-artifacts | false | スクショ・ログ等の成果物 |
 
 ## RLS パターン
 
@@ -124,11 +130,11 @@ UNIQUE(facility_id, alias)
 ```sql
 -- authenticated ユーザーは SELECT のみ
 CREATE POLICY "authenticated read <table>"
-  ON <table> FOR SELECT TO authenticated USING (true);
+  ON lincoln.<table> FOR SELECT TO authenticated USING (true);
 
 -- service_role は全操作可能
 CREATE POLICY "service_role all <table>"
-  ON <table> FOR ALL TO service_role USING (true) WITH CHECK (true);
+  ON lincoln.<table> FOR ALL TO service_role USING (true) WITH CHECK (true);
 ```
 
 ## インデックス
@@ -149,7 +155,7 @@ CREATE POLICY "service_role all <table>"
 ## 共通トリガー関数
 
 ```sql
-CREATE OR REPLACE FUNCTION update_updated_at_column()
+CREATE OR REPLACE FUNCTION lincoln.update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();

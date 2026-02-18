@@ -6,7 +6,7 @@
 import { getSupabase } from "./supabase-client.js";
 
 /** Ordered list of execution steps */
-export const STEPS = ["PARSE", "STEP0", "STEPA", "STEPB", "STEPC"] as const;
+export const STEPS = ["PARSE", "STEPA", "STEP0", "STEPB", "STEPC"] as const;
 export type StepName = (typeof STEPS)[number];
 
 export type JobStatus =

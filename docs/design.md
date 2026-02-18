@@ -136,7 +136,7 @@ UNIQUE(facility_id, alias)
 | id | uuid | PK | ジョブID |
 | facility_id | uuid | FK → facilities.id | 対象施設 |
 | status | text | NOT NULL, CHECK(status IN ('PENDING','RUNNING','SUCCESS','FAILED','CANCELLED')) | ジョブ状態 |
-| last_completed_step | text | CHECK(step IN ('PARSE','STEP0','STEPA','STEPB','STEPC','DONE')) | 最後に完了したステップ |
+| last_completed_step | text | CHECK(step IN ('PARSE','STEPA','STEP0','STEPB','STEPC','DONE')) | 最後に完了したステップ |
 | excel_file_path | text | NOT NULL | Supabase Storage パス |
 | excel_original_name | text | | 元ファイル名 |
 | stay_type | text | CHECK(stay_type IN ('A','B')) | A=単泊, B=連泊 (ユーザー手動設定) |
@@ -153,7 +153,7 @@ UNIQUE(facility_id, alias)
 |--------|-----|------|------|
 | id | uuid | PK | |
 | job_id | uuid | FK → jobs.id | |
-| step | text | NOT NULL | PARSE, STEP0, STEPA, STEPB, STEPC |
+| step | text | NOT NULL | PARSE, STEPA, STEP0, STEPB, STEPC |
 | status | text | NOT NULL | PENDING, RUNNING, SUCCESS, FAILED |
 | attempt | int | default 1 | 試行回数 |
 | started_at | timestamptz | | 開始日時 |
@@ -187,7 +187,7 @@ PENDING → RUNNING → SUCCESS
 
 ステップ遷移:
 ```
-null → PARSE → STEP0 → STEPA → STEPB → STEPC → DONE
+null → PARSE → STEPA → STEP0 → STEPB → STEPC → DONE
 ```
 
 resume 時は `last_completed_step` の次のステップから再開。
@@ -251,7 +251,20 @@ async function handle2FA(page: Page): Promise<void> {
 }
 ```
 
-### 3.5 処理0: コピー元カレンダーへランク反映
+### 3.5 処理A: 施設ID一致チェック
+
+#### 処理フロー
+```
+1. 6800 detail 画面へ遷移
+2. facilityIdText (dl.g_header_id dd) からテキスト取得
+3. 取得したIDを trim して期待する施設IDと比較
+4. 一致 → 処理0 へ
+5. 不一致 → FacilityMismatchError をスローし即停止
+```
+
+> **設計根拠**: 処理0（カレンダー DOM 更新）の前に施設IDチェックを行うことで、誤った施設のカレンダーを更新する事故を防止する。
+
+### 3.6 処理0: コピー元カレンダーへランク反映
 
 #### 処理フロー
 ```
@@ -269,7 +282,7 @@ async function handle2FA(page: Page): Promise<void> {
    - a.calendarTableBtn の class を c_rank_{新ランク} に更新
    - a.calendarTableBtn の style.cssText をスタイルに更新
    - .calendarTableRank のテキストを "[新ランクコード]" に更新
-6. 保存/送信ボタンをクリック（セレクタ TBD → ガード）
+6. 保存ボタンをクリック
 7. 保存完了を確認（レスポンス or DOM変化）
 ```
 
@@ -408,29 +421,22 @@ function updateCalendarRanks(
 }
 ```
 
-### 3.6 処理A: 施設ID一致チェック
-
-#### 処理フロー
-```
-1. 6800 detail 画面へ遷移
-2. facilityIdText (dl.g_header_id dd) からテキスト取得
-3. 取得したIDを trim して期待する施設IDと比較
-4. 一致 → 処理B へ
-5. 不一致 → SelectorTBDError ではなく FacilityMismatchError をスローし即停止
-```
-
 ### 3.7 処理B: 料金ランク一括設定
 
 #### 処理フロー
 ```
 1. 5050 画面へ遷移
-2. コピー元カレンダーを選択（autoComplete 系セレクタ使用）
-3. copyButton をクリック
-4. レスポンス待ち
-5. sendContinueButton をクリック
-6. レスポンス待ち
-7. 全対象について 2-6 を繰り返し
+2. 施設IDチェック（verifyFacilityId 共通関数）— 不一致なら FacilityMismatchError で即停止
+3. コピー元カレンダーを選択（autoComplete 系セレクタ使用）
+4. copyButton をクリック
+5. レスポンス待ち
+6. sendContinueButton をクリック
+7. レスポンス待ち
+8. 全対象について 3-7 を繰り返し
 ```
+
+> **安全設計**: 処理A（STEPA）と同じ `verifyFacilityId()` 共通関数を使用。
+> 処理0 → 処理B の間にセッション切れや施設切替が発生した場合に備え、データ変更前に再検証する。
 
 #### 注意点
 - autoComplete の候補選択は `ul#ui-id-1 li.ui-menu-item a` をクリック
@@ -546,8 +552,8 @@ apps/runner/src/parsers/
 │                                      │
 │ Steps:                               │
 │ ✅ PARSE     completed 10:00:01      │
-│ ✅ STEP0     completed 10:00:15      │
-│ ✅ STEPA     completed 10:00:20      │
+│ ✅ STEPA     completed 10:00:15      │
+│ ✅ STEP0     completed 10:00:20      │
 │ 🔄 STEPB     running   10:00:25     │
 │ ⬜ STEPC     pending                 │
 │                                      │

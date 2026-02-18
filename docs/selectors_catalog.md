@@ -38,14 +38,22 @@
 
 > **優先度: 高** — 全処理に影響するため、早期に取得が必要。
 
-### 2.3 処理0 — カレンダーDOM (step0)
+### 2.3 処理A — 施設ID確認 (stepA)
+
+| キー | セレクタ | ステータス | 備考 |
+|------|---------|-----------|------|
+| stepA.facilityIdText | `dl.g_header_id dd` | CONFIRMED | 6800 detail 画面の施設ID表示 |
+
+> 処理0の前に実行し、誤った施設のカレンダーを更新する事故を防止する。
+
+### 2.4 処理0 — カレンダーDOM (step0)
 
 | キー | セレクタ | ステータス | 備考 |
 |------|---------|-----------|------|
 | step0.monthTables | `table.calendarTable` | REFERENCE | 月カレンダーテーブル群 |
 | step0.dayInCell | `.calendar_table_day` | REFERENCE | セル内の日付要素 |
 | step0.rankText | `.calendarTableRank` | REFERENCE | ランク表示テキスト |
-| step0.roomTypeTitle | `.calendarTableTitle` | REFERENCE | 部屋タイプタイトル |
+| step0.roomTypeTitle | `.calendarTableTitle` | REFERENCE | 部屋タイプタイプタイトル |
 | step0.rankAnchor | `a.calendarTableBtn` | REFERENCE | ランクリンク (class: c_rank_X) |
 | step0.inputPriceRankCd | `input[name="inputPriceRankCd"]` | REFERENCE | ランクコード hidden input |
 | step0.defaultInputPriceRankCd | `input[name="defaultInputPriceRankCd"]` | REFERENCE | デフォルトランクコード（新ランクに更新する） |
@@ -56,12 +64,6 @@
 
 > **TBD: step0.saveButton** — 処理0の完了に必須。Lincoln カレンダー詳細画面の保存ボタンを特定する必要あり。
 > **TBD: step0.calendarNameInput** — カレンダー名の自動検出に使用。参考リポジトリでは `input#mstCalendarNm` を候補としている。
-
-### 2.4 処理A — 施設ID確認 (stepA)
-
-| キー | セレクタ | ステータス | 備考 |
-|------|---------|-----------|------|
-| stepA.facilityIdText | `dl.g_header_id dd` | CONFIRMED | 6800 detail 画面の施設ID表示 |
 
 ### 2.5 処理B — 料金ランク一括設定 5050 (stepB)
 

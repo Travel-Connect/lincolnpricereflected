@@ -14,8 +14,8 @@ type StepFn = (jobId: string, page: Page, job: Job) => Promise<void>;
 
 export const STEP_REGISTRY: Record<StepName, StepFn> = {
   PARSE: runParse,
-  STEP0: runStep0,
   STEPA: runStepA,
+  STEP0: runStep0,
   STEPB: runStepB,
   STEPC: runStepC,
 };

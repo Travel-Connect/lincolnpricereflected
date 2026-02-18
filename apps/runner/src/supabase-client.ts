@@ -23,6 +23,7 @@ export function getSupabase(): SupabaseClient {
 
   client = createClient(url, key, {
     auth: { persistSession: false },
+    db: { schema: "lincoln" },
   });
   return client;
 }
