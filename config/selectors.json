@@ -25,6 +25,7 @@
     "defaultInputPriceRankCd": "input[name=\"defaultInputPriceRankCd\"]",
     "inputPriceRankNm": "input[name=\"inputPriceRankNm\"]",
     "inputRankStyleText": "input[name=\"inputRankStyleText\"]",
+    "calendarNameInput": "TBD",
     "saveButton": "TBD"
   },
   "stepA": {
@@ -33,6 +34,7 @@
   },
   "stepB": {
     "_description": "処理B: 料金ランク一括設定（5050）",
+    "autoCompleteInput": "TBD",
     "copyButton": "a[onclick=\"doCopy()\"]",
     "sendContinueButton": "a[onclick=\"doSend(true);\"]",
     "autoCompleteList": "ul#ui-id-1",
@@ -50,6 +52,8 @@
     "planGroupPickerButton": "#sectionTableBtn3",
     "outputButton": "a[onclick=\"doOutput();\"]",
     "rankOnlyHidden": "#hid_sectionBoxBodyListItem",
-    "rankOnlyToggle": "TBD"
+    "rankOnlyToggle": "TBD",
+    "planGroupList": "TBD",
+    "planGroupConfirm": "TBD"
   }
 }

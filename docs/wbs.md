@@ -168,14 +168,42 @@ PR#1 (monorepo)
 ## 6. TBD ブロッカー
 
 以下の TBD が解決するまで、該当 PR は着手不可（ガード実装は先行可能）。
+TBD セレクタの詳細は `docs/selectors_catalog.md` を参照。
+
+### 6.1 認証・施設切替（6件）
 
 | TBD | ブロックするPR | 回避策 |
 |-----|---------------|--------|
-| facilitySwitch.* | PR#20 | ガード付きスタブで先にPR作成、セレクタ取得後に差し替え |
+| auth.loginIdInput | PR#18 | ガード付きスタブで先にPR作成 |
+| auth.loginPwInput | PR#18 | 同上 |
+| auth.loginButton | PR#18 | 同上 |
+| auth.twoFactorInput | PR#19 | ガード付きスタブで先にPR作成 |
+| auth.twoFactorSubmit | PR#19 | 同上 |
+| facilitySwitch.* (4項目) | PR#20 | ガード付きスタブで先にPR作成、セレクタ取得後に差し替え |
+
+### 6.2 処理0（1件）
+
+| TBD | ブロックするPR | 回避策 |
+|-----|---------------|--------|
+| step0.calendarNameInput | PR#37 | ガード付きスタブ |
 | step0.saveButton | PR#38 | PR#36, PR#37 までは先行可能 |
+
+### 6.3 処理B（1件）
+
+| TBD | ブロックするPR | 回避策 |
+|-----|---------------|--------|
+| stepB.autoCompleteInput | PR#33 | ガード付きスタブ、autocomplete リストは取得可能 |
+
+### 6.4 処理C（3件）
+
+| TBD | ブロックするPR | 回避策 |
+|-----|---------------|--------|
 | stepC.rankOnlyToggle | PR#30 | ガード付きで出力時にスキップする分岐を実装 |
-| auth.login* | PR#18 | ガード付きスタブで先にPR作成 |
-| auth.twoFactor* | PR#19 | ガード付きスタブで先にPR作成 |
+| stepC.planGroupList | PR#30 | ガード付きスタブ |
+| stepC.planGroupConfirm | PR#30 | ガード付きスタブ |
+
+> **合計 12 件** の TBD セレクタが残存（`config/selectors.json` 内の `"TBD"` 値）。
+> Lincoln 実画面へのアクセス取得後に、優先的に解消すること。
 
 ---
 

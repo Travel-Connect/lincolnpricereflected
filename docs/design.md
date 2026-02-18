@@ -257,28 +257,154 @@ async function handle2FA(page: Page): Promise<void> {
 ```
 1. カレンダー詳細画面へ遷移
 2. 現在の DOM 状態を取得（monthTables）
-3. Excel パース結果と DOM のマッピングを構築
+3. 既存のランクセルから rankCd → rankStyle のマッピングを動的に収集
+4. Excel パース結果と DOM のマッピングを構築
    - 各月テーブル内の日付セル → Excel の日付
    - 各部屋タイプ（roomTypeTitle）→ Excel の部屋タイプ
-4. page.evaluate で DOM を更新:
+5. page.evaluate で DOM を更新:
    - inputPriceRankCd を新ランクコードに
-   - inputPriceRankNm を新ランク名に
-   - inputRankStyleText を新スタイルに
-   - defaultInputPriceRankCd は変更しない（差分検知用）
-5. 保存/送信ボタンをクリック（セレクタ TBD → ガード）
-6. 保存完了を確認（レスポンス or DOM変化）
+   - defaultInputPriceRankCd も新ランクコードに更新（未保存変更ダイアログ回避）
+   - inputPriceRankNm を "[新ランクコード]" に（ブラケット付き）
+   - inputRankStyleText を収集済みスタイルから設定
+   - a.calendarTableBtn の class を c_rank_{新ランク} に更新
+   - a.calendarTableBtn の style.cssText をスタイルに更新
+   - .calendarTableRank のテキストを "[新ランクコード]" に更新
+6. 保存/送信ボタンをクリック（セレクタ TBD → ガード）
+7. 保存完了を確認（レスポンス or DOM変化）
+```
+
+> **設計判断（参考リポジトリ分析に基づく）**:
+> - `defaultInputPriceRankCd` は参考リポジトリに従い更新する（未保存変更ダイアログ回避のため）
+> - ランクスタイル（背景色・文字色）は config に固定定義せず、DOM から動的に収集する
+>   - 理由: 参考リポジトリ内に2種類の不一致なスタイル定義が存在し、正確な値は Lincoln 実画面のみが持つ
+> - `inputPriceRankNm` はブラケット付き形式 `[A]` を採用（`importScriptGenerator.ts` に準拠）
+
+#### ランクスタイル動的収集
+
+処理0実行前に、カレンダー画面の既存ランクセルから全ランクのスタイルを収集する:
+
+```typescript
+// page.evaluate で実行
+function collectRankStyles(): Record<string, string> {
+  const styleMap: Record<string, string> = {};
+  document.querySelectorAll('a.calendarTableBtn').forEach(anchor => {
+    // c_rank_X クラスからランクコードを抽出
+    const match = anchor.className.match(/c_rank_([A-Z0-9]+)/);
+    if (match) {
+      const rankCd = match[1];
+      if (!styleMap[rankCd]) {
+        styleMap[rankCd] = anchor.getAttribute('style') || '';
+      }
+    }
+  });
+  return styleMap;
+}
+```
+
+収集できないランクコードが Excel に含まれる場合は警告ログを出力し、スタイルなしで更新を続行する。
+
+#### ランクタイプ一覧（参考リポジトリから抽出）
+
+| カテゴリ | ランクコード | 件数 |
+|---------|------------|------|
+| 標準 | A〜Z | 26 |
+| 拡張 | A1, A2, Z1, Z2, Z3 | 5 |
+| 数値 | 1〜40 | 40 |
+
+有効なランクタイプは `config/rank-types.json` に定義。
+
+#### カレンダーセル DOM 構造
+
+```
+td
+  ├── .calendar_table_day           → 日付番号 (例: "01", "15")
+  ├── .calendarTableTitle           → 部屋タイプ名
+  ├── .calendarTableRank            → ランク表示テキスト (例: "[A]")
+  ├── a.calendarTableBtn            → ランクリンク (class: c_rank_X, inline style)
+  ├── input[name="inputPriceRankCd"]       → hidden: ランクコード
+  ├── input[name="defaultInputPriceRankCd"]→ hidden: デフォルトランクコード
+  ├── input[name="inputPriceRankNm"]       → hidden: ランク名 "[A]"
+  └── input[name="inputRankStyleText"]     → hidden: CSS スタイル文字列
+```
+
+#### テーブルインデックス計算
+
+月テーブルはインデックスで管理される。開始月（startIndex）が基準:
+
+```typescript
+function calculateTableIndex(
+  targetYear: number, targetMonth: number, startIndex: number
+): number {
+  const startDate = new Date(
+    startIndex === 1 ? targetYear - 1 : targetYear, startIndex - 1, 1
+  );
+  const targetDate = new Date(targetYear, targetMonth - 1, 1);
+  return (targetDate.getFullYear() - startDate.getFullYear()) * 12
+       + (targetDate.getMonth() - startDate.getMonth());
+}
 ```
 
 #### DOM更新ロジック（lincolnリポジトリから移植）
+
 ```typescript
 // page.evaluate 内で実行
-function updateCalendarRanks(updates: RankUpdate[]) {
-  // updates: [{ date, roomType, rankCd, rankNm, rankStyle }]
+function updateCalendarRanks(
+  rankData: Record<number, Record<string, string>>,  // day → roomType → newRank
+  rankStyles: Record<string, string>                   // rankCd → CSS style
+) {
   const tables = document.querySelectorAll('table.calendarTable');
-  // 各テーブルの roomTypeTitle から部屋タイプを特定
-  // 各日付セルの .calendar_table_day から日付を特定
-  // 一致するセルの hidden input を更新
-  // rankAnchor のテキストとスタイルも更新（視覚フィードバック）
+  tables.forEach(table => {
+    const rows = table.querySelectorAll('tr');
+    for (let i = 1; i < rows.length; i++) {
+      const cells = rows[i].querySelectorAll('td');
+      for (const cell of cells) {
+        // 1. 日付を取得
+        const dayEl = cell.querySelector('.calendar_table_day');
+        if (!dayEl) continue;
+        const day = parseInt(dayEl.textContent.trim());
+        if (!rankData[day]) continue;
+
+        // 2. 部屋タイプを取得
+        const titleEl = cell.querySelector('.calendarTableTitle');
+        const roomType = titleEl?.textContent?.trim();
+        if (!roomType) continue;
+
+        // 3. 新ランクを取得
+        const newRank = rankData[day][roomType];
+        if (!newRank) continue;
+
+        // 4. 変更不要ならスキップ
+        const rankEl = cell.querySelector('.calendarTableRank');
+        if (!rankEl) continue;
+        const currentRank = rankEl.textContent.trim().replace(/[\[\]]/g, '');
+        if (currentRank === newRank) continue;
+
+        // 5. 表示テキスト更新
+        rankEl.textContent = '[' + newRank + ']';
+
+        // 6. アンカー要素のスタイル更新
+        const linkEl = cell.querySelector('.calendarTableBtn');
+        if (linkEl) {
+          linkEl.className = linkEl.className.replace(/c_rank_[A-Z0-9]+/g, '');
+          linkEl.classList.add('c_rank_' + newRank);
+          if (rankStyles[newRank]) {
+            linkEl.style.cssText = rankStyles[newRank];
+          }
+        }
+
+        // 7. hidden input 更新
+        cell.querySelectorAll('input').forEach(input => {
+          if (input.name === 'inputPriceRankCd' || input.name === 'defaultInputPriceRankCd') {
+            input.value = newRank;
+          } else if (input.name === 'inputPriceRankNm') {
+            input.value = '[' + newRank + ']';
+          } else if (input.name === 'inputRankStyleText' && rankStyles[newRank]) {
+            input.value = rankStyles[newRank];
+          }
+        });
+      }
+    }
+  });
 }
 ```
 

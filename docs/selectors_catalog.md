@@ -46,14 +46,16 @@
 | step0.dayInCell | `.calendar_table_day` | REFERENCE | セル内の日付要素 |
 | step0.rankText | `.calendarTableRank` | REFERENCE | ランク表示テキスト |
 | step0.roomTypeTitle | `.calendarTableTitle` | REFERENCE | 部屋タイプタイトル |
-| step0.rankAnchor | `a.calendarTableBtn` | REFERENCE | ランクリンク |
+| step0.rankAnchor | `a.calendarTableBtn` | REFERENCE | ランクリンク (class: c_rank_X) |
 | step0.inputPriceRankCd | `input[name="inputPriceRankCd"]` | REFERENCE | ランクコード hidden input |
-| step0.defaultInputPriceRankCd | `input[name="defaultInputPriceRankCd"]` | REFERENCE | デフォルトランクコード |
-| step0.inputPriceRankNm | `input[name="inputPriceRankNm"]` | REFERENCE | ランク名 hidden input |
+| step0.defaultInputPriceRankCd | `input[name="defaultInputPriceRankCd"]` | REFERENCE | デフォルトランクコード（新ランクに更新する） |
+| step0.inputPriceRankNm | `input[name="inputPriceRankNm"]` | REFERENCE | ランク名 hidden input (形式: "[A]") |
 | step0.inputRankStyleText | `input[name="inputRankStyleText"]` | REFERENCE | ランクスタイル hidden input |
+| step0.calendarNameInput | TBD | **TBD** | カレンダー名検出 (候補: input#mstCalendarNm) |
 | step0.saveButton | TBD | **TBD** | 保存/送信ボタン |
 
 > **TBD: step0.saveButton** — 処理0の完了に必須。Lincoln カレンダー詳細画面の保存ボタンを特定する必要あり。
+> **TBD: step0.calendarNameInput** — カレンダー名の自動検出に使用。参考リポジトリでは `input#mstCalendarNm` を候補としている。
 
 ### 2.4 処理A — 施設ID確認 (stepA)
 
@@ -65,10 +67,13 @@
 
 | キー | セレクタ | ステータス | 備考 |
 |------|---------|-----------|------|
+| stepB.autoCompleteInput | TBD | **TBD** | オートコンプリート入力フィールド (jQuery UI) |
 | stepB.copyButton | `a[onclick="doCopy()"]` | CONFIRMED | コピーボタン |
 | stepB.sendContinueButton | `a[onclick="doSend(true);"]` | CONFIRMED | 送信継続ボタン |
 | stepB.autoCompleteList | `ul#ui-id-1` | CONFIRMED | オートコンプリートリスト |
 | stepB.autoCompleteItem | `ul#ui-id-1 li.ui-menu-item a` | CONFIRMED | オートコンプリート候補 |
+
+> **TBD: stepB.autoCompleteInput** — カレンダー名を入力するテキストフィールド。jQuery UI Autocomplete のトリガーとなる input 要素を特定する必要あり。
 
 ### 2.6 処理C — 出力・検証 5070 (stepC)
 
@@ -85,8 +90,12 @@
 | stepC.outputButton | `a[onclick="doOutput();"]` | CONFIRMED | 出力ボタン |
 | stepC.rankOnlyHidden | `#hid_sectionBoxBodyListItem` | CONFIRMED | ランクのみ出力の隠し要素 |
 | stepC.rankOnlyToggle | TBD | **TBD** | ランクのみ出力の実際のクリック対象 |
+| stepC.planGroupList | TBD | **TBD** | プラングループピッカー内の選択肢 |
+| stepC.planGroupConfirm | TBD | **TBD** | プラングループピッカーの確定ボタン |
 
 > **TBD: stepC.rankOnlyToggle** — `#hid_sectionBoxBodyListItem` は隠し要素であり、実際のクリック対象は別の要素。Lincoln 5070 画面で特定が必要。
+> **TBD: stepC.planGroupList** — `#sectionTableBtn3` クリック後に表示されるプラングループ選択ダイアログ内の選択肢要素。
+> **TBD: stepC.planGroupConfirm** — プラングループ選択ダイアログの確定ボタン。
 
 ---
 
@@ -96,14 +105,18 @@
 
 | # | キー | 影響する処理 | 取得方法 |
 |---|------|-------------|---------|
-| 1 | facilitySwitch.* (4項目) | 全処理 | Lincoln 画面で施設切替操作時に DevTools で特定 |
-| 2 | step0.saveButton | 処理0 | Lincoln カレンダー詳細画面の保存ボタンを DevTools で特定 |
-| 3 | stepC.rankOnlyToggle | 処理C | Lincoln 5070 画面で「ランクのみ」トグルのクリック対象を DevTools で特定 |
-| 4 | auth.loginIdInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
-| 5 | auth.loginPwInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
-| 6 | auth.loginButton | ログイン | Lincoln ログイン画面で DevTools で特定 |
-| 7 | auth.twoFactorInput | 2FA | 2FA 画面表示時に DevTools で特定 |
-| 8 | auth.twoFactorSubmit | 2FA | 2FA 画面表示時に DevTools で特定 |
+| 1 | auth.loginIdInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
+| 2 | auth.loginPwInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
+| 3 | auth.loginButton | ログイン | Lincoln ログイン画面で DevTools で特定 |
+| 4 | auth.twoFactorInput | 2FA | 2FA 画面表示時に DevTools で特定 |
+| 5 | auth.twoFactorSubmit | 2FA | 2FA 画面表示時に DevTools で特定 |
+| 6 | facilitySwitch.* (4項目) | 全処理 | Lincoln 画面で施設切替操作時に DevTools で特定 |
+| 7 | step0.calendarNameInput | 処理0 | カレンダー詳細画面で DevTools で特定 (候補: input#mstCalendarNm) |
+| 8 | step0.saveButton | 処理0 | Lincoln カレンダー詳細画面の保存ボタンを DevTools で特定 |
+| 9 | stepB.autoCompleteInput | 処理B | 5050 画面の autocomplete 入力フィールドを DevTools で特定 |
+| 10 | stepC.rankOnlyToggle | 処理C | Lincoln 5070 画面で「ランクのみ」トグルのクリック対象を DevTools で特定 |
+| 11 | stepC.planGroupList | 処理C | 5070 プラングループピッカー内の選択肢を DevTools で特定 |
+| 12 | stepC.planGroupConfirm | 処理C | 5070 プラングループピッカーの確定ボタンを DevTools で特定 |
 
 ---
 
