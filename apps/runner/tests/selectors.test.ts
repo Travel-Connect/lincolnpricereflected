@@ -23,7 +23,8 @@ describe("getSelector", () => {
   });
 
   it("throws SelectorTBDError for TBD values", () => {
-    expect(() => getSelector("auth.loginIdInput")).toThrow(SelectorTBDError);
+    // step0.saveButton is still TBD
+    expect(() => getSelector("step0.saveButton")).toThrow(SelectorTBDError);
   });
 
   it("throws SelectorNotFoundError for missing paths", () => {

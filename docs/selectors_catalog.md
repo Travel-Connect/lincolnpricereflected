@@ -21,9 +21,9 @@
 | キー | セレクタ | ステータス | 備考 |
 |------|---------|-----------|------|
 | auth.loginUrl | `https://www.tl-lincoln.net/accomodation/Ascsc1000InitAction.do` | CONFIRMED | ログインURL |
-| auth.loginIdInput | TBD | TBD | ログインID入力フィールド |
-| auth.loginPwInput | TBD | TBD | パスワード入力フィールド |
-| auth.loginButton | TBD | TBD | ログインボタン |
+| auth.loginIdInput | `#txt_usrId` | **CONFIRMED** | ログインID入力フィールド (input type=text, name=usrId) |
+| auth.loginPwInput | `input[type='password'][name='pwd']` | **CONFIRMED** | パスワード入力フィールド |
+| auth.loginButton | `#doLogin` | **CONFIRMED** | ログインボタン (a.c_btn.-large.-default, text="上記に同意してログイン") |
 | auth.twoFactorInput | TBD | TBD | 2FA入力フィールド |
 | auth.twoFactorSubmit | TBD | TBD | 2FA送信ボタン |
 
@@ -105,9 +105,9 @@
 
 | # | キー | 影響する処理 | 取得方法 |
 |---|------|-------------|---------|
-| 1 | auth.loginIdInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
-| 2 | auth.loginPwInput | ログイン | Lincoln ログイン画面で DevTools で特定 |
-| 3 | auth.loginButton | ログイン | Lincoln ログイン画面で DevTools で特定 |
+| ~~1~~ | ~~auth.loginIdInput~~ | ~~ログイン~~ | **CONFIRMED** → `#txt_usrId` |
+| ~~2~~ | ~~auth.loginPwInput~~ | ~~ログイン~~ | **CONFIRMED** → `input[type='password'][name='pwd']` |
+| ~~3~~ | ~~auth.loginButton~~ | ~~ログイン~~ | **CONFIRMED** → `#doLogin` |
 | 4 | auth.twoFactorInput | 2FA | 2FA 画面表示時に DevTools で特定 |
 | 5 | auth.twoFactorSubmit | 2FA | 2FA 画面表示時に DevTools で特定 |
 | 6 | facilitySwitch.* (4項目) | 全処理 | Lincoln 画面で施設切替操作時に DevTools で特定 |

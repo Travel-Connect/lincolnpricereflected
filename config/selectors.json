@@ -1,15 +1,25 @@
 {
   "auth": {
     "loginUrl": "https://www.tl-lincoln.net/accomodation/Ascsc1000InitAction.do",
-    "loginIdInput": "TBD",
-    "loginPwInput": "TBD",
-    "loginButton": "TBD",
-    "twoFactorInput": "TBD",
-    "twoFactorSubmit": "TBD"
+    "loginIdInput": "#txt_usrId",
+    "loginPwInput": "input[type='password'][name='pwd']",
+    "loginButton": "#doLogin",
+    "forceLoginButton": "#doForceLogout",
+    "twoFactorInput": "#issueAuthKey",
+    "twoFactorSubmit": "a[onclick='doLogin()']",
+    "twoFactorSkipCheckbox": "#authSkipFlg"
+  },
+  "navigation": {
+    "_description": "トップページからの遷移リンク",
+    "topPage": "Ascsc1010InitAction.do",
+    "priceManagement": "Ascsc5010InitAction.do",
+    "calendarBulkCopy": "doLink('0','1','DD')",
+    "calendarList": "doLink('1','0','')"
   },
   "facilitySwitch": {
-    "openButton": "TBD",
-    "searchInput": "TBD",
+    "openButton": "a.cFormTextBtn3Switch",
+    "searchInput": "input.cFormTextInputSwitch",
+    "hiddenFacilityId": "#changeLincolnInnId",
     "selectItem": "TBD",
     "confirmButton": "TBD"
   },

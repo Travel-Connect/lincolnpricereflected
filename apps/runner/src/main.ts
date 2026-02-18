@@ -4,6 +4,9 @@
  *
  * Fetches a job from Supabase, determines remaining steps via
  * last_completed_step (resume support), and executes them in order.
+ *
+ * Auth flow: login → 2FA (if needed) → session save → steps
+ * Session persistence: reuses saved cookies to skip 2FA on subsequent runs.
  */
 
 import "dotenv/config";
@@ -23,6 +26,14 @@ import { withRetry } from "./retry.js";
 import { saveScreenshot, saveHtml } from "./artifact-writer.js";
 import { NetworkRecorder } from "./network-recorder.js";
 import { OperationTimeoutError, NetworkError } from "./errors.js";
+import {
+  login,
+  waitFor2FA,
+  hasSavedSession,
+  getSessionPath,
+  saveSession,
+  clearSession,
+} from "./auth/index.js";
 
 /** Parse --job-id from CLI args */
 function parseArgs(): string {
@@ -33,13 +44,6 @@ function parseArgs(): string {
     process.exit(1);
   }
   return args[idx + 1];
-}
-
-/** Check if an error is eligible for retry */
-function isRetryable(err: unknown): boolean {
-  return (
-    err instanceof OperationTimeoutError || err instanceof NetworkError
-  );
 }
 
 async function main(): Promise<void> {
@@ -63,10 +67,13 @@ async function main(): Promise<void> {
   // 3. Mark job as RUNNING
   await updateJobStatus(jobId, "RUNNING");
 
-  // 4. Launch browser
+  // 4. Launch browser (with saved session if available)
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
   const browser = await chromium.launch({ headless });
-  const context = await browser.newContext();
+  const contextOptions = hasSavedSession()
+    ? { storageState: getSessionPath() }
+    : {};
+  const context = await browser.newContext(contextOptions);
   const page = await context.newPage();
 
   // 5. Attach network recorder
@@ -74,7 +81,14 @@ async function main(): Promise<void> {
   recorder.attach(page);
 
   try {
-    // 6. Execute each step
+    // 6. Auth: Login → 2FA → Session save
+    // Only needed for steps that require the browser (STEP0+)
+    const needsBrowser = steps.some((s) => s !== "PARSE");
+    if (needsBrowser) {
+      await performAuth(page, context);
+    }
+
+    // 7. Execute each step
     for (const step of steps) {
       const stepFn = STEP_REGISTRY[step];
       console.log(`[runner] ▶ ${step}`);
@@ -111,7 +125,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // 7. All steps done
+    // 8. All steps done
     await updateLastCompletedStep(jobId, "DONE");
     await updateJobStatus(jobId, "SUCCESS");
     console.log("[runner] ✓ Job completed successfully");
@@ -124,6 +138,59 @@ async function main(): Promise<void> {
     recorder.detach(page);
     await browser.close();
   }
+}
+
+/**
+ * Perform Lincoln authentication.
+ * Tries saved session first; falls back to fresh login + 2FA.
+ */
+async function performAuth(
+  page: import("playwright").Page,
+  context: import("playwright").BrowserContext,
+): Promise<void> {
+  const loginId = process.env.LINCOLN_LOGIN_ID;
+  const loginPw = process.env.LINCOLN_LOGIN_PW;
+
+  if (!loginId || !loginPw) {
+    throw new Error(
+      "Missing LINCOLN_LOGIN_ID or LINCOLN_LOGIN_PW in environment",
+    );
+  }
+
+  // Try saved session — navigate to top page and see if we're still logged in
+  if (hasSavedSession()) {
+    console.log("[runner] Attempting session restore...");
+    await page.goto(
+      "https://www.tl-lincoln.net/accomodation/Ascsc1010InitAction.do",
+      { waitUntil: "networkidle", timeout: 15000 },
+    ).catch(() => {});
+
+    const title = await page.title();
+    if (title.includes("トップページ") || title.includes("メニュー")) {
+      console.log("[runner] Session restored — skipping login");
+      return;
+    }
+
+    console.log("[runner] Saved session expired — performing fresh login");
+    clearSession();
+  }
+
+  // Fresh login
+  const result = await login(page, loginId, loginPw);
+
+  if (result.needs2FA) {
+    await waitFor2FA(page);
+  }
+
+  // Verify we're on a post-login page
+  const title = await page.title();
+  if (title.includes("ログイン") || title.includes("認証")) {
+    throw new Error(`[auth] Login appears to have failed. Page title: ${title}`);
+  }
+
+  // Save session for next run
+  await saveSession(context);
+  console.log("[runner] Auth completed successfully");
 }
 
 main().catch((err) => {
