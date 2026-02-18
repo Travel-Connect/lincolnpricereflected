@@ -1,0 +1,17 @@
+{
+  "name": "lincolnpricereflected",
+  "private": true,
+  "workspaces": [
+    "apps/web",
+    "apps/runner"
+  ],
+  "scripts": {
+    "dev": "npm -w apps/web run dev",
+    "build": "npm -w apps/web run build",
+    "lint": "npm -w apps/web run lint"
+  },
+  "dependencies": {
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.1.18",
+    "lightningcss-win32-x64-msvc": "^1.31.1"
+  }
+}

@@ -1,0 +1,1 @@
+-- Seed data will be added in the Supabase schema PR.
