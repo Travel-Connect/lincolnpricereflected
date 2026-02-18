@@ -11,6 +11,7 @@
     "lint": "npm -w apps/web run lint"
   },
   "dependencies": {
+    "@rollup/rollup-win32-x64-msvc": "^4.34.0",
     "@tailwindcss/oxide-win32-x64-msvc": "^4.1.18",
     "lightningcss-win32-x64-msvc": "^1.31.1"
   }
