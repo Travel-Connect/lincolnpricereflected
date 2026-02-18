@@ -1,0 +1,55 @@
+{
+  "auth": {
+    "loginUrl": "https://www.tl-lincoln.net/accomodation/Ascsc1000InitAction.do",
+    "loginIdInput": "TBD",
+    "loginPwInput": "TBD",
+    "loginButton": "TBD",
+    "twoFactorInput": "TBD",
+    "twoFactorSubmit": "TBD"
+  },
+  "facilitySwitch": {
+    "openButton": "TBD",
+    "searchInput": "TBD",
+    "selectItem": "TBD",
+    "confirmButton": "TBD"
+  },
+  "step0": {
+    "_description": "処理0: コピー元カレンダーへランク反映（カレンダーDOM）",
+    "_source": "参考リポジトリ https://github.com/Travel-Connect/lincoln 由来 — 実環境確認要",
+    "monthTables": "table.calendarTable",
+    "dayInCell": ".calendar_table_day",
+    "rankText": ".calendarTableRank",
+    "roomTypeTitle": ".calendarTableTitle",
+    "rankAnchor": "a.calendarTableBtn",
+    "inputPriceRankCd": "input[name=\"inputPriceRankCd\"]",
+    "defaultInputPriceRankCd": "input[name=\"defaultInputPriceRankCd\"]",
+    "inputPriceRankNm": "input[name=\"inputPriceRankNm\"]",
+    "inputRankStyleText": "input[name=\"inputRankStyleText\"]",
+    "saveButton": "TBD"
+  },
+  "stepA": {
+    "_description": "処理A: コピー元カレンダー設定（施設ID一致チェック, 6800 detail）",
+    "facilityIdText": "dl.g_header_id dd"
+  },
+  "stepB": {
+    "_description": "処理B: 料金ランク一括設定（5050）",
+    "copyButton": "a[onclick=\"doCopy()\"]",
+    "sendContinueButton": "a[onclick=\"doSend(true);\"]",
+    "autoCompleteList": "ul#ui-id-1",
+    "autoCompleteItem": "ul#ui-id-1 li.ui-menu-item a"
+  },
+  "stepC": {
+    "_description": "処理C: 出力→突合検証（5070）",
+    "fromYear": "select[name=\"objectDateFromYear\"]",
+    "fromMonth": "select[name=\"objectDateFromMonth\"]",
+    "fromDay": "select[name=\"objectDateFromDay\"]",
+    "toYear": "select[name=\"objectDateToYear\"]",
+    "toMonth": "select[name=\"objectDateToMonth\"]",
+    "toDay": "select[name=\"objectDateToDay\"]",
+    "searchButton": "a[onclick=\"doSearch();\"]",
+    "planGroupPickerButton": "#sectionTableBtn3",
+    "outputButton": "a[onclick=\"doOutput();\"]",
+    "rankOnlyHidden": "#hid_sectionBoxBodyListItem",
+    "rankOnlyToggle": "TBD"
+  }
+}
