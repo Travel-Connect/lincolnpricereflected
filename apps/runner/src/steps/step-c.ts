@@ -43,14 +43,11 @@ export interface StepCOptions {
 }
 
 /**
- * Default plans for 畳の宿 那覇壺屋 verification.
- * These are the plans the user specified for checking.
+ * Default plans for 畳の宿 那覇壺屋 カレンダーテスト verification.
  */
 const DEFAULT_OUTPUT_PLANS: OutputPlan[] = [
-  { value: "6,25", label: "和室コンド / 【+40%】海外ラック単泊_素泊まり" },
-  { value: "6,26", label: "和室コンド / 【+40%】海外ラック連泊_素泊まり" },
-  { value: "5,24", label: "和室コンド ～5名仕様～ / 【+40%】海外ラック単泊_素泊まり" },
-  { value: "5,11", label: "和室コンド ～5名仕様～ / 【+40%】海外ラック連泊_素泊まり" },
+  { value: "6,46", label: "和室コンド / カレンダーテスト" },
+  { value: "5,47", label: "和室コンド ～5名仕様～ / カレンダーテスト" },
 ];
 
 export async function run(
@@ -61,7 +58,11 @@ export async function run(
 ): Promise<string> {
   console.log("[STEPC] Output & verification — start");
 
-  const plans = options?.outputPlans || DEFAULT_OUTPUT_PLANS;
+  // Resolve output plans: config_json > options > defaults
+  const configPlans = (job.config_json as Record<string, unknown> | null)
+    ?.output_plans as OutputPlan[] | undefined;
+  const plans = configPlans || options?.outputPlans || DEFAULT_OUTPUT_PLANS;
+  console.log(`[STEPC] Plan source: ${configPlans ? "config_json" : options?.outputPlans ? "options" : "defaults"}`);
 
   // --- Safety: verify facility ID ---
   const expectedId = await getFacilityLincolnId(job.facility_id);

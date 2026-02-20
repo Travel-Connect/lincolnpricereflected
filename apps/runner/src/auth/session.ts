@@ -5,7 +5,7 @@
  * Storage state file: data/artifacts/lincoln-session.json
  */
 
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
 import type { BrowserContext } from "playwright";
 
@@ -32,7 +32,6 @@ export async function saveSession(context: BrowserContext): Promise<void> {
 
 /** Clear saved session (e.g., on auth failure) */
 export function clearSession(): void {
-  const { unlinkSync } = require("node:fs");
   try {
     unlinkSync(SESSION_FILE);
     console.log("[auth] Session cleared");

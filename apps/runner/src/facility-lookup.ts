@@ -17,9 +17,19 @@ import { getSupabase } from "./supabase-client.js";
 export async function getFacilityLincolnId(
   facilityId: string,
 ): Promise<string> {
+  const info = await getFacilityInfo(facilityId);
+  return info.lincoln_id;
+}
+
+/**
+ * Look up a facility's lincoln_id and name by its UUID primary key.
+ */
+export async function getFacilityInfo(
+  facilityId: string,
+): Promise<{ lincoln_id: string; name: string }> {
   const { data, error } = await getSupabase()
     .from("facilities")
-    .select("lincoln_id")
+    .select("lincoln_id, name")
     .eq("id", facilityId)
     .single();
 
@@ -29,5 +39,5 @@ export async function getFacilityLincolnId(
     );
   }
 
-  return data.lincoln_id;
+  return { lincoln_id: data.lincoln_id, name: data.name };
 }

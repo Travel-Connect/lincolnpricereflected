@@ -4,7 +4,11 @@
  */
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import "dotenv/config";
+import { config } from "dotenv";
+import { resolve } from "path";
+
+// Load .env from project root
+config({ path: resolve(import.meta.dirname, "..", "..", "..", ".env") });
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = SupabaseClient<any, "lincoln">;

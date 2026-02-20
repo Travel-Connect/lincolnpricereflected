@@ -9,8 +9,12 @@
  * Session persistence: reuses saved cookies to skip 2FA on subsequent runs.
  */
 
-import "dotenv/config";
+import { config } from "dotenv";
 import { resolve } from "path";
+
+// Load .env from project root (not CWD)
+const PROJECT_ROOT = resolve(import.meta.dirname, "..", "..", "..");
+config({ path: resolve(PROJECT_ROOT, ".env") });
 import { chromium } from "playwright";
 import {
   getJob,
@@ -44,7 +48,6 @@ import {
 } from "./auth/index.js";
 
 const POLL_INTERVAL_MS = 5000;
-const PROJECT_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 
 /** Parse CLI args */
 function parseArgs(): { mode: "single"; jobId: string } | { mode: "poll" } {
@@ -68,8 +71,8 @@ async function resolveExcelPath(job: Job): Promise<string> {
   const filePath = job.excel_file_path;
   if (!filePath) throw new Error("No excel_file_path on job");
 
-  // Local absolute path — use directly
-  if (filePath.startsWith("/") || filePath.match(/^[A-Z]:\\/i)) {
+  // Local absolute path — use directly (handles C:\, C:/, and /unix/path)
+  if (filePath.startsWith("/") || filePath.match(/^[A-Z]:[/\\]/i)) {
     return filePath;
   }
 
