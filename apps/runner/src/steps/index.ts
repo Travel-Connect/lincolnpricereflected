@@ -17,5 +17,5 @@ export const STEP_REGISTRY: Record<StepName, StepFn> = {
   STEPA: runStepA,
   STEP0: runStep0,
   STEPB: runStepB,
-  STEPC: runStepC,
+  STEPC: async (jobId, page, job) => { await runStepC(jobId, page, job); },
 };

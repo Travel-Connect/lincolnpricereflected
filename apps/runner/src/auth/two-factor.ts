@@ -7,12 +7,15 @@
 
 import type { Page } from "playwright";
 import { TwoFactorTimeoutError } from "../errors.js";
+import { getSelector } from "../selectors.js";
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Wait for user to complete 2FA in the browser.
  * Detects completion by URL change from the 2FA page.
+ *
+ * Automatically checks the "skip 2FA next time" checkbox if present.
  *
  * @param page - Playwright page on the 2FA screen
  * @param timeoutMs - Max wait time (default: 5 minutes)
@@ -27,6 +30,20 @@ export async function waitFor2FA(
 
   const twoFactorUrl = page.url();
   const start = Date.now();
+
+  // Auto-check "skip 2FA next time" checkbox
+  try {
+    const skipSelector = getSelector("auth.twoFactorSkipCheckbox");
+    const skipBox = page.locator(skipSelector);
+    if (await skipBox.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (!(await skipBox.isChecked())) {
+        await skipBox.check();
+        console.log("[auth] 2FA skip checkbox checked (次回スキップ)");
+      }
+    }
+  } catch {
+    // Checkbox not found — continue without skip
+  }
 
   console.log("[auth] 2FA detected — waiting for user input in browser...");
   console.log(

@@ -10,19 +10,18 @@
 
 import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
+import { getFacilityLincolnId } from "../facility-lookup.js";
 import { verifyFacilityId } from "../verify-facility.js";
 
 export async function run(
   _jobId: string,
   page: Page,
-  _job: Job,
+  job: Job,
 ): Promise<void> {
-  // TODO: Resolve expected facility ID from job.facility_id via Supabase lookup
-  // For now, log a placeholder until the full pipeline is wired up
   console.log("[STEPA] Facility ID verification (pre-STEP0)");
-  console.log("[STEPA] TODO: Resolve expected facility ID from job record");
 
-  // Once facility lookup is implemented, call:
-  // const expectedId = await getFacilityLincolnId(job.facility_id);
-  // await verifyFacilityId(page, expectedId, "STEPA");
+  const expectedId = await getFacilityLincolnId(job.facility_id);
+  console.log(`[STEPA] Expected lincoln_id: ${expectedId}`);
+
+  await verifyFacilityId(page, expectedId, "STEPA");
 }

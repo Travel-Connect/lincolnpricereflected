@@ -1,11 +1,14 @@
 # 詳細設計書 — Lincoln Price Reflected
 
+> **更新日**: 2026-02-20
+> **ステータス**: Runner (PARSE〜STEPC) 実装・テスト完了。Web GUI 未着手。
+
 ## 1. システムアーキテクチャ
 
 ### 1.1 全体構成図
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    apps/web (Next.js)                │
+│                    apps/web (Next.js)  ※未着手       │
 │  ┌──────────┐ ┌──────────┐ ┌───────────┐           │
 │  │ Upload   │ │ Job      │ │ Facility  │           │
 │  │ Page     │ │ Monitor  │ │ Selector  │           │
@@ -18,168 +21,156 @@
                     │
          ┌──────────┴──────────┐
          │   Supabase          │
+         │  (lincoln schema)   │
          │  ┌────────────────┐ │
          │  │ PostgreSQL     │ │
          │  │ - facilities   │ │
          │  │ - jobs         │ │
          │  │ - job_steps    │ │
+         │  │ - job_expected │ │
+         │  │   _ranks       │ │
          │  └────────────────┘ │
          │  ┌────────────────┐ │
          │  │ Storage        │ │
-         │  │ - excel_uploads│ │
-         │  │ - artifacts    │ │
+         │  │ - lincoln-     │ │
+         │  │   excel-uploads│ │
+         │  │ - lincoln-     │ │
+         │  │   artifacts    │ │
          │  └────────────────┘ │
          └──────────┬──────────┘
                     │
 ┌───────────────────┼──────────────────────────────────┐
-│            apps/runner (Playwright)                    │
-│  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐│
-│  │ Step 0  │ │ Step A   │ │ Step B   │ │ Step C   ││
-│  │ Calendar│ │ Facility │ │ Bulk     │ │ Verify   ││
-│  │ Import  │ │ Check    │ │ Copy     │ │ Output   ││
-│  └─────────┘ └──────────┘ └──────────┘ └──────────┘│
-│  ┌──────────────────────────────────────────────────┐│
-│  │             Shared: Auth, Selectors, Retry       ││
-│  └──────────────────────────────────────────────────┘│
+│            apps/runner (TypeScript + Playwright)      │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐       │
+│  │ PARSE  │→│ STEPA  │→│ STEP0  │→│ STEPB  │       │
+│  │ Excel  │ │Facility│ │Calendar│ │ Bulk   │       │
+│  │ Parse  │ │ Check  │ │ Inject │ │ Copy   │       │
+│  └────────┘ └────────┘ └────────┘ └───┬────┘       │
+│                                       ↓             │
+│                                  ┌────────┐         │
+│                                  │ STEPC  │         │
+│                                  │ Output │         │
+│                                  │Verify  │         │
+│                                  └────────┘         │
+│  ┌──────────────────────────────────────────────┐   │
+│  │  Shared: Auth, Selectors, Supabase, Retry    │   │
+│  └──────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────┘
 ```
 
-### 1.2 ディレクトリ構成
+### 1.2 ディレクトリ構成（実装済み）
 ```
 lincolnpricereflected/
 ├── apps/
-│   ├── web/                    # Next.js フロントエンド
-│   │   ├── src/
-│   │   │   ├── app/            # App Router
-│   │   │   │   ├── page.tsx    # ダッシュボード
-│   │   │   │   ├── upload/     # Excel アップロード
-│   │   │   │   ├── jobs/       # ジョブ一覧・詳細
-│   │   │   │   └── api/        # API Routes
-│   │   │   ├── components/     # UI コンポーネント
-│   │   │   └── lib/            # ユーティリティ
-│   │   ├── package.json
-│   │   └── next.config.js
-│   │
-│   └── runner/                 # Playwright 自動化
+│   ├── web/                           # Next.js (※未着手)
+│   └── runner/                        # Playwright 自動化 (実装済み)
 │       ├── src/
-│       │   ├── main.ts         # エントリポイント
-│       │   ├── steps/          # 各処理ステップ
-│       │   │   ├── step0-calendar-import.ts
-│       │   │   ├── stepA-facility-check.ts
-│       │   │   ├── stepB-bulk-copy.ts
-│       │   │   └── stepC-verify-output.ts
-│       │   ├── auth/           # ログイン・2FA・施設切替
-│       │   │   ├── login.ts
-│       │   │   ├── two-factor.ts
-│       │   │   └── facility-switch.ts
-│       │   ├── parsers/        # Excel パーサ
-│       │   │   ├── excel-reader.ts (or .py via uv)
-│       │   │   └── rank-matrix.ts
-│       │   ├── selectors.ts    # selectors.json ローダ + TBD ガード
-│       │   ├── retry.ts        # リトライロジック
-│       │   ├── artifacts.ts    # スクショ・ログ保存
-│       │   └── job-state.ts    # ジョブ状態管理(resume)
-│       ├── package.json
-│       └── playwright.config.ts
+│       │   ├── main.ts                # エントリポイント
+│       │   ├── auth/                  # 認証モジュール
+│       │   │   ├── index.ts           # re-export
+│       │   │   ├── login.ts           # ログイン処理
+│       │   │   ├── two-factor.ts      # 2FA 待機
+│       │   │   ├── facility-switch.ts # 施設切替
+│       │   │   └── session.ts         # セッション管理
+│       │   ├── steps/                 # 各処理ステップ
+│       │   │   ├── index.ts           # ステップレジストリ
+│       │   │   ├── step-parse.ts      # PARSE: Excel パース
+│       │   │   ├── step-a.ts          # STEPA: 施設ID検証
+│       │   │   ├── step0.ts           # STEP0: カレンダーランク反映
+│       │   │   ├── step0-helpers.ts   # STEP0: Supabase/DOM操作
+│       │   │   ├── step-b.ts          # STEPB: 料金ランク一括設定
+│       │   │   ├── step-c.ts          # STEPC: 出力+突合検証
+│       │   │   └── step-c-helpers.ts  # STEPC: xlsx解析+検証ロジック
+│       │   ├── parsers/               # Excel パーサ
+│       │   │   ├── parse_excel.py     # Python (openpyxl)
+│       │   │   ├── excel-reader.ts    # TS ラッパー
+│       │   │   └── save-expected-ranks.ts # Supabase 保存
+│       │   ├── artifact-writer.ts     # スクショ・ログ保存
+│       │   ├── errors.ts             # カスタムエラー型
+│       │   ├── facility-lookup.ts     # 施設ID変換
+│       │   ├── job-state.ts           # ジョブ状態管理
+│       │   ├── network-recorder.ts    # ネットワークログ
+│       │   ├── retry.ts              # リトライロジック
+│       │   ├── selectors.ts          # selectors.json ローダ
+│       │   ├── supabase-client.ts    # Supabase クライアント
+│       │   └── verify-facility.ts    # 施設ID検証共通関数
+│       ├── tests/                     # ユニットテスト (vitest)
+│       │   ├── step-c-helpers.test.ts
+│       │   ├── step0-helpers.test.ts
+│       │   ├── step-a.test.ts
+│       │   ├── facility-lookup.test.ts
+│       │   └── step0.test.ts
+│       └── package.json
 │
-├── supabase/
-│   ├── migrations/             # DDL マイグレーション
-│   └── seed.sql                # 施設マスタ初期データ
+├── scripts/                           # デモ・テストスクリプト
+│   ├── demo-run.ts                    # 全パイプラインテスト
+│   ├── demo-resume.ts                 # resume テスト
+│   ├── demo-stepc.ts                  # STEPC 単体テスト
+│   ├── web-capture-5070.ts            # 5070 DOM キャプチャ
+│   └── ...                            # 各種探索・キャプチャスクリプト
 │
 ├── config/
-│   └── selectors.json          # 全セレクタ集約
+│   ├── selectors.json                 # 全セレクタ集約 (TBD なし)
+│   └── rank-types.json                # ランクタイプ定義
+│
+├── supabase/
+│   └── migrations/
+│       ├── 20260218000001_facilities.sql
+│       ├── 20260218000002_jobs.sql
+│       ├── 20260218000003_plans.sql
+│       ├── 20260218000004_storage.sql
+│       └── 20260218000005_schema_grants.sql
+│
+├── data/
+│   ├── artifacts/                     # ジョブ生成物 (ローカル)
+│   │   └── job-{uuid}/               # ジョブごとのディレクトリ
+│   │       ├── *.png                  # スクリーンショット
+│   │       ├── *.xlsx                 # 出力 xlsx
+│   │       └── STEPC-verification.txt # 検証結果テキスト
+│   └── chrome-profile/               # 永続化ブラウザプロファイル
 │
 ├── docs/
 │   ├── requirements.md
-│   ├── design.md
-│   ├── selectors_catalog.md
-│   └── wbs.md
+│   └── design.md                      # (本書)
 │
-├── package.json                # monorepo root (workspaces)
-└── turbo.json                  # Turborepo 設定(optional)
+└── package.json                       # monorepo root
 ```
+
+---
 
 ## 2. データベース設計
 
-### 2.1 ER図概要
+> スキーマ: `lincoln`（OTAlogin の `public` と分離）
+
+### 2.1 ER図
 ```
 facilities 1──* facility_aliases
 facilities 1──* jobs
 jobs       1──* job_steps
+jobs       1──* job_expected_ranks
 jobs       1──* artifacts
 ```
 
 ### 2.2 テーブル定義
 
-#### facilities (施設マスタ)
-| カラム | 型 | 制約 | 説明 |
-|--------|-----|------|------|
-| id | uuid | PK, default gen_random_uuid() | 内部ID |
-| lincoln_id | varchar(10) | UNIQUE, NOT NULL | Lincoln施設ID (e.g. I38347) |
-| name | text | NOT NULL | 施設正式名 |
-| created_at | timestamptz | default now() | 作成日時 |
-| updated_at | timestamptz | default now() | 更新日時 |
-
-#### facility_aliases (施設エイリアス)
-| カラム | 型 | 制約 | 説明 |
-|--------|-----|------|------|
-| id | uuid | PK | 内部ID |
-| facility_id | uuid | FK → facilities.id | 施設参照 |
-| alias | text | NOT NULL | エイリアス名 (e.g. "畳の宿那覇壺屋", "畳の宿") |
-| created_at | timestamptz | default now() | 作成日時 |
-
-UNIQUE(facility_id, alias)
-
-#### jobs (ジョブ管理)
-| カラム | 型 | 制約 | 説明 |
-|--------|-----|------|------|
-| id | uuid | PK | ジョブID |
-| facility_id | uuid | FK → facilities.id | 対象施設 |
-| status | text | NOT NULL, CHECK(status IN ('PENDING','RUNNING','SUCCESS','FAILED','CANCELLED')) | ジョブ状態 |
-| last_completed_step | text | CHECK(step IN ('PARSE','STEPA','STEP0','STEPB','STEPC','DONE')) | 最後に完了したステップ |
-| excel_file_path | text | NOT NULL | Supabase Storage パス |
-| excel_original_name | text | | 元ファイル名 |
-| stay_type | text | CHECK(stay_type IN ('A','B')) | A=単泊, B=連泊 (ユーザー手動設定) |
-| target_period_from | date | | 対象期間（開始） |
-| target_period_to | date | | 対象期間（終了） |
-| summary_json | jsonb | | 実行前サマリ |
-| result_json | jsonb | | 検証結果 |
-| retry_count | int | default 3 | 最大リトライ回数 |
-| created_at | timestamptz | default now() | 作成日時 |
-| updated_at | timestamptz | default now() | 更新日時 |
-
-#### job_steps (ステップ実行ログ)
+#### job_expected_ranks (パース済みランク)
 | カラム | 型 | 制約 | 説明 |
 |--------|-----|------|------|
 | id | uuid | PK | |
-| job_id | uuid | FK → jobs.id | |
-| step | text | NOT NULL | PARSE, STEPA, STEP0, STEPB, STEPC |
-| status | text | NOT NULL | PENDING, RUNNING, SUCCESS, FAILED |
-| attempt | int | default 1 | 試行回数 |
-| started_at | timestamptz | | 開始日時 |
-| completed_at | timestamptz | | 完了日時 |
-| error_message | text | | エラーメッセージ |
-| metadata_json | jsonb | | ステップ固有のメタデータ |
-
-#### artifacts (成果物・エビデンス)
-| カラム | 型 | 制約 | 説明 |
-|--------|-----|------|------|
-| id | uuid | PK | |
-| job_id | uuid | FK → jobs.id | |
-| step | text | NOT NULL | 対象ステップ |
-| type | text | NOT NULL | screenshot, html, network_log, verification_csv |
-| storage_path | text | NOT NULL | Supabase Storage パス |
+| job_id | uuid | FK → jobs.id ON DELETE CASCADE | |
+| date | date | NOT NULL | 対象日付 |
+| room_type | text | NOT NULL | 部屋タイプ名 (Excel B列の値そのまま) |
+| rank_code | text | NOT NULL | ランクコード (A〜Z 等) |
 | created_at | timestamptz | default now() | |
 
-### 2.3 Supabase Storage バケット
-| バケット | 用途 |
-|----------|------|
-| excel-uploads | アップロードされたExcelファイル |
-| artifacts | スクリーンショット・HTML・ログ・検証結果CSV |
+> 他テーブル (facilities, jobs, job_steps, artifacts) は変更なし。
 
-## 3. 処理詳細設計
+---
 
-### 3.1 共通: ジョブ状態遷移
+## 3. 処理詳細設計（実装済み）
+
+### 3.1 ジョブ状態遷移
+
 ```
 PENDING → RUNNING → SUCCESS
                   → FAILED → (resume) → RUNNING → ...
@@ -190,406 +181,357 @@ PENDING → RUNNING → SUCCESS
 null → PARSE → STEPA → STEP0 → STEPB → STEPC → DONE
 ```
 
-resume 時は `last_completed_step` の次のステップから再開。
+### 3.2 認証モジュール (`apps/runner/src/auth/`)
 
-### 3.2 共通: セレクタ読み込み
-
-```typescript
-// apps/runner/src/selectors.ts
-import selectors from '../../../config/selectors.json';
-
-export function getSelector(path: string): string {
-  // path example: "stepB.copyButton"
-  const parts = path.split('.');
-  let current: any = selectors;
-  for (const part of parts) {
-    current = current[part];
-    if (!current) {
-      throw new SelectorNotFoundError(`Selector not found: ${path}`);
-    }
-  }
-  if (current === "TBD") {
-    throw new SelectorTBDError(
-      `Selector "${path}" is TBD. Cannot proceed until selector is defined in config/selectors.json.`
-    );
-  }
-  return current;
-}
+#### ログイン (`login.ts`)
+```
+1. https://www.tl-lincoln.net/accomodation/Ascsc1000InitAction.do へ遷移
+2. ログインID/PW を入力してログインボタンクリック
+3. 遷移先 URL で結果判定:
+   - トップページ → ログイン成功
+   - 2FA ページ → needs2FA: true を返却
+   - エラーメッセージ → 例外スロー
 ```
 
-**TBDガード**: セレクタが "TBD" の場合は `SelectorTBDError` をスローし、安全に停止。
-
-### 3.3 共通: リトライロジック
-
-```typescript
-// apps/runner/src/retry.ts
-interface RetryOptions {
-  maxAttempts: number;    // default: 3
-  delayMs: number;        // default: 2000
-  backoffFactor: number;  // default: 2
-  onRetry?: (attempt: number, error: Error) => void;
-}
-
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  options: RetryOptions
-): Promise<T> {
-  // 指数バックオフでリトライ
-  // 全リトライ失敗時は最後のエラーをスロー
-}
+#### 2FA 待機 (`two-factor.ts`)
+```
+1. 2FA 入力画面を検知 (input.cFormTextInputMiddle)
+2. コンソールに「2FA 入力待ち」を表示
+3. ユーザーがブラウザで手動入力 → 遷移完了を検知
+4. タイムアウト: 5分
 ```
 
-### 3.4 共通: 2FA 検知・待機
-
-```typescript
-// apps/runner/src/auth/two-factor.ts
-async function handle2FA(page: Page): Promise<void> {
-  // 1. 2FA 入力画面を検知（セレクタ TBD → ガード）
-  // 2. コンソールに「2FA入力を待っています...」表示
-  // 3. page.waitForNavigation or ポーリングで入力完了を検知
-  // 4. タイムアウト: 5分（設定可能）
-}
+#### 施設切替 (`facility-switch.ts`)
+```
+1. トップページの施設切替入力欄 (input.cFormTextInputSwitch) にフォーカス
+2. 施設名キーワードを入力 → jQuery UI autocomplete 候補から選択
+3. 選択で Ascsc1010SwitchAction.do へフォーム送信
+4. ★ 初回は MASC1042 (二重ログインエラー) が頻出
+5. エラー検知 → 同じ操作を再試行 → 強制切替成功
+6. ヘッダーの施設IDで切替成功を確認
 ```
 
-### 3.5 処理A: 施設ID一致チェック
+### 3.3 PARSE — Excel パース (`step-parse.ts`)
 
 #### 処理フロー
 ```
-1. 6800 detail 画面へ遷移
-2. facilityIdText (dl.g_header_id dd) からテキスト取得
-3. 取得したIDを trim して期待する施設IDと比較
-4. 一致 → 処理0 へ
-5. 不一致 → FacilityMismatchError をスローし即停止
+1. Python (parse_excel.py) を subprocess で実行
+   - openpyxl で横カレンダーシートを解析
+   - ファイル名から施設名候補を正規表現で抽出
+   - 行4以降: B列=部屋タイプ名, C列以降=ランクコード
+   - 行3: 日付ヘッダー (datetime 型)
+2. JSON 形式で結果を標準出力
+3. TypeScript (excel-reader.ts) で受け取り
+4. save-expected-ranks.ts で Supabase job_expected_ranks に保存
+   - 500行ずつバッチ insert (Supabase max_rows 制約対応)
 ```
 
-> **設計根拠**: 処理0（カレンダー DOM 更新）の前に施設IDチェックを行うことで、誤った施設のカレンダーを更新する事故を防止する。
-
-### 3.6 処理0: コピー元カレンダーへランク反映
-
-#### 処理フロー
+#### 入力 Excel 構造 (横カレンダーシート)
 ```
-1. カレンダー詳細画面へ遷移
-2. 現在の DOM 状態を取得（monthTables）
-3. 既存のランクセルから rankCd → rankStyle のマッピングを動的に収集
-4. Excel パース結果と DOM のマッピングを構築
-   - 各月テーブル内の日付セル → Excel の日付
-   - 各部屋タイプ（roomTypeTitle）→ Excel の部屋タイプ
-5. page.evaluate で DOM を更新:
-   - inputPriceRankCd を新ランクコードに
-   - defaultInputPriceRankCd も新ランクコードに更新（未保存変更ダイアログ回避）
-   - inputPriceRankNm を "[新ランクコード]" に（ブラケット付き）
-   - inputRankStyleText を収集済みスタイルから設定
-   - a.calendarTableBtn の class を c_rank_{新ランク} に更新
-   - a.calendarTableBtn の style.cssText をスタイルに更新
-   - .calendarTableRank のテキストを "[新ランクコード]" に更新
-6. 保存ボタンをクリック
-7. 保存完了を確認（レスポンス or DOM変化）
+     B列          C列    D列    E列  ...
+行3  (日付基準)   2/1    2/2    2/3  ...
+行4  和室コンド(単泊)  V      V      U   ...
+行5  和室コンド(連泊)  V      V      T   ...
+行6  和室コンド5名(単泊)  V   V      U   ...
+行7  和室コンド5名(連泊)  V   V      T   ...
+行8  0 (終端)
 ```
 
-> **設計判断（参考リポジトリ分析に基づく）**:
-> - `defaultInputPriceRankCd` は参考リポジトリに従い更新する（未保存変更ダイアログ回避のため）
-> - ランクスタイル（背景色・文字色）は config に固定定義せず、DOM から動的に収集する
->   - 理由: 参考リポジトリ内に2種類の不一致なスタイル定義が存在し、正確な値は Lincoln 実画面のみが持つ
-> - `inputPriceRankNm` はブラケット付き形式 `[A]` を採用（`importScriptGenerator.ts` に準拠）
+### 3.4 STEPA — 施設ID一致チェック (`step-a.ts`)
 
-#### ランクスタイル動的収集
+#### 処理フロー (実装済み)
+```
+1. Lincoln トップページ (6800系) へ遷移
+2. ヘッダーの dl.g_header_id dd から施設IDテキスト取得
+3. Supabase facilities テーブルから期待する lincoln_id を取得
+4. 一致 → 次へ / 不一致 → FacilityMismatchError で即停止
+```
 
-処理0実行前に、カレンダー画面の既存ランクセルから全ランクのスタイルを収集する:
+### 3.5 STEP0 — カレンダーランク反映 (`step0.ts`, `step0-helpers.ts`)
 
+#### 重要な DOM 知見
+Lincoln 6800 カレンダーは **日レベル** (1日1ランク)。部屋タイプ別ではない。
+
+```
+カレンダーセル構造（実際の DOM）:
+<a class="calendarTableBtn c_rank_X" style="background-color:...">
+  <span class="calendar_table_day">18</span>
+  <span class="calendarTableRank">[X]</span>
+  <input name="inputTargetDate" value="20260218">     ← 日付 (YYYYMMDD)
+  <input name="inputPriceRankCd" value="X">            ← 現在のランク
+  <input name="defaultInputPriceRankCd" value="X">     ← 変更検知用 (※更新禁止)
+  <input name="inputPriceRankNm" value="[X]">
+  <input name="inputRankStyleText" value="...">
+  <input name="inputSalesStopSetFlg" value="">
+</a>
+```
+
+> **重要**: `defaultInputPriceRankCd` は **更新してはならない**。
+> Lincoln の `doUpdate()` は `inputPriceRankCd` と `defaultInputPriceRankCd` を比較して変更を検知する。
+> 両方を同じ値にすると「変更なし」と判定され、保存が無効になる。
+
+#### ランクスタイル収集
+ランクパレットボタン (`a.rankBtn[data-id]`) から CSS を収集:
 ```typescript
-// page.evaluate で実行
-function collectRankStyles(): Record<string, string> {
-  const styleMap: Record<string, string> = {};
-  document.querySelectorAll('a.calendarTableBtn').forEach(anchor => {
-    // c_rank_X クラスからランクコードを抽出
-    const match = anchor.className.match(/c_rank_([A-Z0-9]+)/);
-    if (match) {
-      const rankCd = match[1];
-      if (!styleMap[rankCd]) {
-        styleMap[rankCd] = anchor.getAttribute('style') || '';
-      }
-    }
-  });
-  return styleMap;
-}
+// step0-helpers.ts: collectRankStyles()
+document.querySelectorAll(rankPaletteBtnSelector).forEach(btn => {
+  const rankId = btn.getAttribute("data-id");
+  if (rankId) styleMap[rankId] = btn.getAttribute("style") || "";
+});
 ```
 
-収集できないランクコードが Excel に含まれる場合は警告ログを出力し、スタイルなしで更新を続行する。
-
-#### ランクタイプ一覧（参考リポジトリから抽出）
-
-| カテゴリ | ランクコード | 件数 |
-|---------|------------|------|
-| 標準 | A〜Z | 26 |
-| 拡張 | A1, A2, Z1, Z2, Z3 | 5 |
-| 数値 | 1〜40 | 40 |
-
-有効なランクタイプは `config/rank-types.json` に定義。
-
-#### カレンダーセル DOM 構造
-
+#### 処理フロー (実装済み)
 ```
-td
-  ├── .calendar_table_day           → 日付番号 (例: "01", "15")
-  ├── .calendarTableTitle           → 部屋タイプ名
-  ├── .calendarTableRank            → ランク表示テキスト (例: "[A]")
-  ├── a.calendarTableBtn            → ランクリンク (class: c_rank_X, inline style)
-  ├── input[name="inputPriceRankCd"]       → hidden: ランクコード
-  ├── input[name="defaultInputPriceRankCd"]→ hidden: デフォルトランクコード
-  ├── input[name="inputPriceRankNm"]       → hidden: ランク名 "[A]"
-  └── input[name="inputRankStyleText"]     → hidden: CSS スタイル文字列
+1. Supabase から expected ranks を取得 → RankMap (date→roomType→rankCode)
+2. RankMap を日レベルに平坦化: rankMapToDateRank() → {date: rankCode}
+   ※ 最初の roomType のランクを使用（カレンダーは日レベルのため）
+3. 6800 カレンダー一覧へ遷移
+4. 「テストカレンダー」をクリック → カレンダー詳細
+5. 期間終了日を max_date に設定 → 再描画待ち
+6. ランクパレットからスタイルを収集 (29種確認済み)
+7. page.evaluate(updateCalendarCells, {dateRanks, styleMap, sel})
+   - 全 a.calendarTableBtn を走査
+   - inputTargetDate の value (YYYYMMDD) から日付キーを生成
+   - 期待するランクがあればアンカーのclass/style/hidden inputsを更新
+8. doUpdate() ダイアログを accept して保存
+   ★ page.on('dialog', d => d.accept()) が必須
+   ★ Playwright はデフォルトで dismiss → 保存サイレント失敗を防ぐ
 ```
 
-#### テーブルインデックス計算
+### 3.6 STEPB — 料金ランク一括設定 (`step-b.ts`)
 
-月テーブルはインデックスで管理される。開始月（startIndex）が基準:
+#### 処理フロー (実装済み)
+```
+1. 5050 (Ascsc5050InitAction.do) へ遷移
+2. 施設ID検証
+3. 月範囲を算出 (expected_ranks の min〜max date)
+4. 各月について:
+   a. プラングループセット「カレンダーテスト」を選択
+   b. コピー元に「テストカレンダー」を autocomplete 入力
+   c. doCopy() クリック → コピー完了待ち
+   d. 最終月以外: doSend(true) = 「送信して続ける」
+      最終月: doSend(false) = 「送信して閉じる」
+   e. confirm ダイアログ「送信します。よろしいですか？」→ accept
+   f. 通知ダイアログ「処理を受け付けました。」→ accept
+   g. ポップアップウィンドウ (Comsc0040) を検知して閉じる
+   h. 翌月ボタンで次月へ遷移
+```
 
+#### confirm / popup ハンドリング
 ```typescript
-function calculateTableIndex(
-  targetYear: number, targetMonth: number, startIndex: number
-): number {
-  const startDate = new Date(
-    startIndex === 1 ? targetYear - 1 : targetYear, startIndex - 1, 1
-  );
-  const targetDate = new Date(targetYear, targetMonth - 1, 1);
-  return (targetDate.getFullYear() - startDate.getFullYear()) * 12
-       + (targetDate.getMonth() - startDate.getMonth());
-}
+// 全ダイアログを自動 accept
+page.on("dialog", async (d) => { await d.accept(); });
+// ポップアップウィンドウを自動 close
+context.on("page", async (newPage) => { await newPage.close(); });
 ```
 
-#### DOM更新ロジック（lincolnリポジトリから移植）
+### 3.7 STEPC — 出力→突合検証 (`step-c.ts`, `step-c-helpers.ts`)
 
+#### 出力フロー (実装済み)
+```
+1. 5070 (Ascsc5070InitAction.do) へ遷移
+2. 施設ID検証
+3. 出力期間: 本日 ～ 2ヶ月後末日を設定
+4. 検索ボタンクリック → プラン一覧表示
+5. Dual-list でプラン選択:
+   - 右側 select#sectionTableSelect2 (利用可能) からプランを選択
+   - ← ボタン (#sectionTableBtn3) で左側 (出力対象) に移動
+6. 「ランクのみ出力」チェックボックスを JS で操作:
+   ★ カスタムスタイルで非表示 → Playwright の .check() は使えない
+   ★ page.evaluate() で cb.checked=true, イベント発火, hidden input 設定
+7. doOutput() クリック → page.waitForEvent("download")
+8. ダウンロード完了 → artifacts/job-{id}/ に保存
+```
+
+#### 出力 xlsx 構造
+```
+Row 1: "出力期間:2026年02月20日～2026年04月30日"
+Row 2: (空)
+Row 3: "ネット室タイプグループ" | "プラングループ"
+
+--- プランブロック (5行 × N ブロック) ---
+Row N+0: [roomType(A)] | [planName(B)] | "月日" | 02/20 | 02/21 | ...
+Row N+1:                               |  ""    |  売   |  売   | ...
+Row N+2:                               | "販売室数" | 1  |  0    | ...
+Row N+3:                               | "ランク"   | R  |  W    | ...  ← ★ここが検証対象
+Row N+4: (空セパレータ)
+
+マージセル:
+  A列: ネット室タイプグループ名 (複数ブロックにまたがる)
+  B列: プラン名 (5行分)
+```
+
+#### Room type マッピング
+出力 xlsx の (ネット室タイプグループ + プラン名) → 入力 Excel の room_type:
+
+| 出力 roomType | プラン名に含む | → 入力 room_type |
+|---|---|---|
+| 和室コンド | 単泊 | 和室コンド(単泊) |
+| 和室コンド | 連泊 | 和室コンド(連泊) |
+| 和室コンド ～5名仕様～ | 単泊 | 和室コンド5名(単泊) |
+| 和室コンド ～5名仕様～ | 連泊 | 和室コンド5名(連泊) |
+
+マッピング設定は `RoomTypeMapping` インターフェースで施設ごとに定義可能。
+
+#### 突合検証ロジック (実装済み)
 ```typescript
-// page.evaluate 内で実行
-function updateCalendarRanks(
-  rankData: Record<number, Record<string, string>>,  // day → roomType → newRank
-  rankStyles: Record<string, string>                   // rankCd → CSS style
-) {
-  const tables = document.querySelectorAll('table.calendarTable');
-  tables.forEach(table => {
-    const rows = table.querySelectorAll('tr');
-    for (let i = 1; i < rows.length; i++) {
-      const cells = rows[i].querySelectorAll('td');
-      for (const cell of cells) {
-        // 1. 日付を取得
-        const dayEl = cell.querySelector('.calendar_table_day');
-        if (!dayEl) continue;
-        const day = parseInt(dayEl.textContent.trim());
-        if (!rankData[day]) continue;
+// step-c-helpers.ts
 
-        // 2. 部屋タイプを取得
-        const titleEl = cell.querySelector('.calendarTableTitle');
-        const roomType = titleEl?.textContent?.trim();
-        if (!roomType) continue;
+// 1. parseOutputXlsx(filePath, roomTypeMapping)
+//    - xlsx (SheetJS) でファイル読み込み
+//    - Row 1 から出力期間 (年月日) を解析
+//    - "月日" 行でプランブロック開始を検出
+//    - マージセルから roomType/planName を解決
+//    - "ランク" 行からランクコードを抽出
+//    - MM/DD → YYYY-MM-DD 変換 (年は期間ヘッダーから推定)
 
-        // 3. 新ランクを取得
-        const newRank = rankData[day][roomType];
-        if (!newRank) continue;
+// 2. verifyRanks(expectedRankMap, parsedOutput)
+//    - 出力期間内の全エントリを比較
+//    - 一致/不一致/欠落をカウント
+//    - 不一致詳細 (日付, roomType, expected, actual) を記録
+//    - 結果を STEPC-verification.txt に保存
+//    - 不一致あり → VerificationFailedError スロー
 
-        // 4. 変更不要ならスキップ
-        const rankEl = cell.querySelector('.calendarTableRank');
-        if (!rankEl) continue;
-        const currentRank = rankEl.textContent.trim().replace(/[\[\]]/g, '');
-        if (currentRank === newRank) continue;
-
-        // 5. 表示テキスト更新
-        rankEl.textContent = '[' + newRank + ']';
-
-        // 6. アンカー要素のスタイル更新
-        const linkEl = cell.querySelector('.calendarTableBtn');
-        if (linkEl) {
-          linkEl.className = linkEl.className.replace(/c_rank_[A-Z0-9]+/g, '');
-          linkEl.classList.add('c_rank_' + newRank);
-          if (rankStyles[newRank]) {
-            linkEl.style.cssText = rankStyles[newRank];
-          }
-        }
-
-        // 7. hidden input 更新
-        cell.querySelectorAll('input').forEach(input => {
-          if (input.name === 'inputPriceRankCd' || input.name === 'defaultInputPriceRankCd') {
-            input.value = newRank;
-          } else if (input.name === 'inputPriceRankNm') {
-            input.value = '[' + newRank + ']';
-          } else if (input.name === 'inputRankStyleText' && rankStyles[newRank]) {
-            input.value = rankStyles[newRank];
-          }
-        });
-      }
-    }
-  });
-}
-```
-
-### 3.7 処理B: 料金ランク一括設定
-
-#### 処理フロー
-```
-1. 5050 画面へ遷移
-2. 施設IDチェック（verifyFacilityId 共通関数）— 不一致なら FacilityMismatchError で即停止
-3. コピー元カレンダーを選択（autoComplete 系セレクタ使用）
-4. copyButton をクリック
-5. レスポンス待ち
-6. sendContinueButton をクリック
-7. レスポンス待ち
-8. 全対象について 3-7 を繰り返し
-```
-
-> **安全設計**: 処理A（STEPA）と同じ `verifyFacilityId()` 共通関数を使用。
-> 処理0 → 処理B の間にセッション切れや施設切替が発生した場合に備え、データ変更前に再検証する。
-
-#### 注意点
-- autoComplete の候補選択は `ul#ui-id-1 li.ui-menu-item a` をクリック
-- 送信継続（doSend(true)）は「次のカレンダーへ続けて処理」の意味
-
-### 3.8 処理C: 出力→突合検証
-
-#### 処理フロー
-```
-1. 5070 画面へ遷移
-2. 期間設定:
-   - 対象期間が3ヶ月超の場合は3ヶ月ずつに分割
-   - fromYear/fromMonth/fromDay, toYear/toMonth/toDay を select で設定
-3. planGroupPickerButton をクリックしてプラングループ選択
-4. 「ランクのみ出力」トグルを有効化（セレクタ TBD → ガード）
-5. outputButton をクリック
-6. ダウンロード完了を検知
-7. ダウンロードしたファイルを解析
-8. Excel 入力データと突合:
-   - 日付 × 部屋タイプ × ランクコード の全組み合わせを比較
-   - 完全一致: SUCCESS
-   - 1件でも不一致: FAILED、不一致詳細をログ/CSV/JSON保存
-```
-
-#### 突合ロジック
-```typescript
 interface VerificationResult {
-  status: 'SUCCESS' | 'FAILED';
-  totalEntries: number;
-  matchedEntries: number;
-  mismatchedEntries: MismatchEntry[];
-}
-
-interface MismatchEntry {
-  date: string;
-  roomType: string;
-  expectedRank: string;
-  actualRank: string;
+  totalChecked: number;
+  matchCount: number;
+  mismatchCount: number;
+  missingInExpected: number;
+  missingInActual: number;
+  mismatches: MismatchDetail[];
+  summary: string;          // テキスト形式の検証結果
 }
 ```
 
-## 4. Excel パーサ設計
+---
 
-### 4.1 パースフロー
-```
-1. ファイル名から施設名候補を正規表現で抽出
-   - /【(.+?)様】/ → 施設名候補
-2. Supabase facility_aliases と照合
-   - 完全一致 or 部分一致 → facility_id 特定
-   - 一致なし → UI で手動選択
-3. C4 を起点にデータ矩形を取得
-   - 右端: 列方向に走査し、空白セルで終端
-   - 下端: 行方向に走査し、空白セルで終端
-4. 行ヘッダー: 日付列（C列にある日付データ）
-5. 列ヘッダー: 部屋タイプ/ランク名（4行目のヘッダ行）
-6. 結果: RankMatrix オブジェクト
-```
+## 4. セレクタ設計
 
-### 4.2 RankMatrix 型
+全セレクタは `config/selectors.json` に集約。TBD は **すべて解決済み** (2026-02-18)。
+
+主要セクション:
+- `auth`: ログインフォーム, 2FA, エラーメッセージ
+- `navigation`: ページ遷移リンク
+- `facilitySwitch`: 施設切替 autocomplete
+- `step0`: 6800 カレンダー DOM (ランクアンカー, パレット, 期間ドロップダウン, 保存ボタン)
+- `stepA`: 施設ID テキスト
+- `stepB`: 5050 一括設定 (コピー, 送信, 月ナビ, プラングループセット)
+- `stepC`: 5070 出力 (日付, 検索, dual-list, ランクのみチェック, 出力ボタン)
+
+---
+
+## 5. 施設固有設定
+
+### 5.1 畳の宿 那覇壺屋 (Y77131) — テスト済み
+
+| 設定項目 | 値 |
+|---|---|
+| テストカレンダー名 | テストカレンダー |
+| テストプラングループセット | カレンダーテスト (ID: 491885) |
+| STEPC 出力プラン (テスト用) | `6,46` (和室コンド/カレンダーテスト), `5,47` (和室コンド5名/カレンダーテスト) |
+| STEPC 出力プラン (本番用) | 施設設定により可変 |
+| Room type mapping | 和室コンド → 和室コンド, 和室コンド ～5名仕様～ → 和室コンド5名 |
+
+### 5.2 OutputPlan インターフェース
+
 ```typescript
-interface RankMatrix {
-  facilityNameCandidate: string;
-  dates: string[];           // YYYY-MM-DD 形式
-  roomTypes: string[];       // 列ヘッダーから
-  matrix: Map<string, Map<string, string>>;  // date → roomType → rankCode
+interface OutputPlan {
+  value: string;  // "roomTypeId,planId" (e.g. "6,46")
+  label: string;  // 表示名
+}
+
+interface StepCOptions {
+  outputPlans?: OutputPlan[];
+  roomTypeMapping?: RoomTypeMapping;
+  skipVerification?: boolean;
 }
 ```
 
-### 4.3 Python (uv) 利用箇所
-Excel パースは openpyxl (Python) を使用。uv で依存管理。
-TypeScript runner から subprocess で呼び出し、JSON で結果を受け取る。
+---
+
+## 6. テスト実績
+
+### 6.1 全パイプラインテスト (2026-02-20)
+
+**Excel**: 【畳の宿那覇壺屋様】料金変動案_20260212.xlsx
+**プラン**: カレンダーテスト (テスト用)
+
+| ステップ | 結果 | 詳細 |
+|---|---|---|
+| PARSE | OK | 1460 entries, 4 room types, 365 dates |
+| STEPA | OK | Y77131 一致 |
+| STEP0 | OK | 347 cells 更新 |
+| STEPB | OK | 12ヶ月送信完了 |
+| STEPC | OK | **140/140 完全一致** |
+
+### 6.2 ユニットテスト
 
 ```
-apps/runner/src/parsers/
-├── parse_excel.py          # Python スクリプト（uv管理）
-├── pyproject.toml          # uv 依存定義
-└── excel-reader.ts         # TS ラッパー（subprocess呼び出し）
+apps/runner/tests/step-c-helpers.test.ts  — 10 tests passed
+apps/runner/tests/step0-helpers.test.ts   — passed
+apps/runner/tests/facility-lookup.test.ts — passed
 ```
 
-## 5. フロントエンド設計
-
-### 5.1 ページ構成
-| パス | 機能 |
-|------|------|
-| / | ダッシュボード（最近のジョブ一覧） |
-| /upload | Excel アップロード + 施設選択 + A/B紐づけ |
-| /jobs | ジョブ一覧 |
-| /jobs/[id] | ジョブ詳細（ステップ状態・ログ） |
-
-### 5.2 アップロードフロー
-```
-1. Excel ファイルをドロップ/選択
-2. ファイル名から施設名候補を自動抽出・照合
-   - 一致: 施設を自動選択（変更可能）
-   - 不一致: 施設ドロップダウンで手動選択
-3. A(単泊) / B(連泊) をラジオボタンで選択
-4. パースプレビュー表示:
-   - 変更件数
-   - 対象期間
-   - 対象施設
-   - 対象カレンダー
-   - 対象プラングループ/プラン
-5. 「実行」ボタン → 確認ダイアログ → ジョブ作成
-```
-
-### 5.3 ジョブモニタ
-```
-ジョブ詳細ページ:
-┌─────────────────────────────────────┐
-│ Job: abc-123-def                     │
-│ Facility: 畳の宿 那覇壺屋 (Y77131)  │
-│ Status: RUNNING                      │
-│                                      │
-│ Steps:                               │
-│ ✅ PARSE     completed 10:00:01      │
-│ ✅ STEPA     completed 10:00:15      │
-│ ✅ STEP0     completed 10:00:20      │
-│ 🔄 STEPB     running   10:00:25     │
-│ ⬜ STEPC     pending                 │
-│                                      │
-│ [View Logs] [Cancel] [Resume]        │
-└─────────────────────────────────────┘
-```
-
-## 6. 環境変数設計
-
-| 変数名 | 用途 | 例 |
-|--------|------|-----|
-| LINCOLN_LOGIN_ID | Lincoln ログインID | (secret) |
-| LINCOLN_LOGIN_PW | Lincoln ログインPW | (secret) |
-| SUPABASE_URL | Supabase プロジェクトURL | https://xxx.supabase.co |
-| SUPABASE_ANON_KEY | Supabase 匿名キー | eyJ... |
-| SUPABASE_SERVICE_ROLE_KEY | Supabase サービスロールキー | eyJ... |
-| PLAYWRIGHT_HEADLESS | ヘッドレスモード（通常false） | false |
-| RETRY_MAX_ATTEMPTS | リトライ最大回数 | 3 |
-| TWO_FACTOR_TIMEOUT_MS | 2FA 入力待ちタイムアウト | 300000 |
+---
 
 ## 7. エラーハンドリング設計
 
-### 7.1 エラー分類
+### 7.1 エラー分類 (`errors.ts`)
 | エラー種別 | クラス名 | 対処 |
 |-----------|----------|------|
-| セレクタ未定義 | SelectorTBDError | 即停止、TBDである旨を表示 |
-| セレクタ不一致 | SelectorNotFoundError | 即停止、DOM変更の可能性を示唆 |
+| セレクタ未定義 | SelectorTBDError | 即停止 |
+| セレクタ不存在 | SelectorNotFoundError | 即停止 |
 | 施設ID不一致 | FacilityMismatchError | 即停止、期待値と実値をログ |
 | 検証失敗 | VerificationFailedError | 即停止、不一致詳細をファイル保存 |
 | 操作タイムアウト | OperationTimeoutError | リトライ対象 |
 | ネットワークエラー | NetworkError | リトライ対象 |
-| 2FAタイムアウト | TwoFactorTimeoutError | 即停止、ユーザーに再実行を促す |
+| 2FAタイムアウト | TwoFactorTimeoutError | 即停止 |
+| リトライ超過 | RetryExhaustedError | 即停止 |
 
-### 7.2 artifacts 保存
-失敗時に自動保存する情報:
-- スクリーンショット: `artifacts/{job_id}/{step}_{timestamp}.png`
-- HTML スナップショット: `artifacts/{job_id}/{step}_{timestamp}.html`
-- ネットワークログ: `artifacts/{job_id}/{step}_{timestamp}_network.json`
-- 検証結果: `artifacts/{job_id}/verification_{timestamp}.csv`
+### 7.2 Artifacts 保存
+- スクリーンショット: `data/artifacts/job-{id}/{step}_{timestamp}.png`
+- HTML: `data/artifacts/job-{id}/{step}_{timestamp}.html`
+- 出力 xlsx: `data/artifacts/job-{id}/PriceData_{timestamp}.xlsx`
+- 検証結果: `data/artifacts/job-{id}/STEPC-verification.txt`
+
+---
+
+## 8. 環境変数
+
+| 変数名 | 用途 |
+|--------|------|
+| LINCOLN_LOGIN_ID | Lincoln ログインID |
+| LINCOLN_LOGIN_PW | Lincoln ログインPW |
+| SUPABASE_URL | Supabase プロジェクトURL |
+| SUPABASE_SERVICE_ROLE_KEY | Supabase サービスロールキー |
+
+---
+
+## 9. 依存ライブラリ
+
+### Runner (`apps/runner/package.json`)
+| パッケージ | 用途 |
+|---|---|
+| playwright | ブラウザ自動化 |
+| @supabase/supabase-js | DB アクセス |
+| dotenv | 環境変数 |
+| xlsx (SheetJS) | 出力 xlsx パース (STEPC) |
+| vitest | テスト |
+| tsx | TypeScript 実行 |
+
+### Python (`apps/runner/src/parsers/`)
+| パッケージ | 用途 |
+|---|---|
+| openpyxl | 入力 Excel パース |
+
+---
+
+## 10. 未実装・今後の課題
+
+| 項目 | 状態 | 備考 |
+|---|---|---|
+| Web GUI (Next.js) | 未着手 | アップロード, ジョブモニタ, 施設選択 |
+| 施設別プラン設定 DB 化 | 未実装 | 現在はコード内にハードコード |
+| 3ヶ月超の出力期間分割 | 未実装 | 現在は2ヶ月分のみ出力 |
+| 本番プラングループセット対応 | テスト時制限 | 安全ルールに基づきカレンダーテストのみ |
+| Supabase Realtime 連携 | 未実装 | ステップ進捗のリアルタイム通知 |

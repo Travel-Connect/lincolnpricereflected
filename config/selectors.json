@@ -44,6 +44,7 @@
     "copyCalendarButton": "a[onclick=\"doCopyCalendar()\"]",
     "periodRedrawButton": "a[onclick=\"doPeriodRedraw()\"]",
     "copySearchKeyWord": "input#searchKeyWord",
+    "rankPaletteBtn": "a.rankBtn",
     "calendarListItem": "a[onclick*=\"doDetail\"]",
     "periodFromYear": "select[name=\"targetFromYear\"]",
     "periodFromMonth": "select[name=\"targetFromMonth\"]",
@@ -57,7 +58,7 @@
     "facilityIdText": "dl.g_header_id dd"
   },
   "stepB": {
-    "_description": "処理B: 料金ランク一括設定（5050）",
+    "_description": "処理B: 料金ランク一括設定（5050）— 月ごとにコピー→送信をループ",
     "autoCompleteInput": "input#copyPlanGrpName",
     "copyButton": "a[onclick=\"doCopy()\"]",
     "sendCloseButton": "a[onclick=\"doSend(false);\"]",
@@ -67,10 +68,15 @@
     "autoCompleteItem": "ul#ui-id-1 li.ui-menu-item a",
     "planGroupSetItem": "a[onclick*=\"selectPlanGroupSet\"]",
     "planGroupSearchBtn": "#sectionTableSearchBtn3",
-    "planGroupSearchInput": "input#planGrpNmSearchText"
+    "planGroupSearchInput": "input#planGrpNmSearchText",
+    "monthSelect": "select[name=\"targetYm\"]",
+    "nextMonthButton": "a[onclick=\"doNextMonth()\"]",
+    "prevMonthButton": "a[onclick=\"doPreMonth()\"]",
+    "thisMonthButton": "a[onclick=\"doThisMonth()\"]"
   },
   "stepC": {
-    "_description": "処理C: 出力→突合検証（5070）",
+    "_description": "処理C: 出力→突合検証（5070）— dual-list でプラン選択→出力→xlsx 解析",
+    "_source": "実環境にて確認済み（2026-02-19 畳の宿 那覇壺屋）",
     "fromYear": "select[name=\"objectDateFromYear\"]",
     "fromMonth": "select[name=\"objectDateFromMonth\"]",
     "fromDay": "select[name=\"objectDateFromDay\"]",
@@ -78,13 +84,16 @@
     "toMonth": "select[name=\"objectDateToMonth\"]",
     "toDay": "select[name=\"objectDateToDay\"]",
     "searchButton": "a[onclick=\"doSearch();\"]",
-    "planGroupPickerButton": "#sectionTableBtn3",
+    "outputPlanGroupSelect": "select#sectionTableSelect",
+    "availablePlanGroupSelect": "select#sectionTableSelect2",
+    "moveToOutputButton": "#sectionTableBtn3",
+    "moveToAvailableButton": "#sectionTableBtn2",
     "planGroupSetItem": "a[onclick*=\"selectPlanGroupSet\"]",
-    "planGroupSelect": "select#sectionTableSelect",
     "outputButton": "a[onclick=\"doOutput();\"]",
     "rankOnlyCheckbox": "input#sectionBoxBodyListItem[name=rankLimit]",
     "rankOnlyHidden": "#hid_sectionBoxBodyListItem",
     "excludeExpiredCheckbox": "input[name=excludeExpiredPlanGrpCheckBox]",
-    "outputRestrictionCheckbox": "input#outputRestriction"
+    "outputRestrictionCheckbox": "input#outputRestriction",
+    "roomTypePlanGroupFilter": "select[name=\"arrNetRoomTypePlanGroup\"]"
   }
 }

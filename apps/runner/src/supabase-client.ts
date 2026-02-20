@@ -6,10 +6,13 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import "dotenv/config";
 
-let client: SupabaseClient | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnySupabaseClient = SupabaseClient<any, "lincoln">;
+
+let client: AnySupabaseClient | null = null;
 
 /** Get (or create) the singleton Supabase client */
-export function getSupabase(): SupabaseClient {
+export function getSupabase(): AnySupabaseClient {
   if (client) return client;
 
   const url = process.env.SUPABASE_URL;
