@@ -30,7 +30,7 @@ export default function LoginPage() {
     }
 
     // Open dashboard in a new tab, then show success on login page
-    window.open("/history", "_blank");
+    window.open("/jobs/new", "_blank");
     setLoading(false);
     setSuccess(true);
   }
@@ -106,7 +106,7 @@ export default function LoginPage() {
           {success ? (
             <Button
               type="button"
-              onClick={() => window.open("/history", "_blank")}
+              onClick={() => window.open("/jobs/new", "_blank")}
               className="w-full bg-indigo-600 hover:bg-indigo-700"
             >
               <span className="flex items-center gap-2">
