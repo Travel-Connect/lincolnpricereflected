@@ -35,6 +35,7 @@ export interface CreateJobInput {
   stay_type: "A" | "B" | null;
   config_json: Record<string, unknown>;
   retry_count: number;
+  target_machine: string;
 }
 
 export async function createJob(input: CreateJobInput) {
@@ -57,6 +58,7 @@ export async function createJob(input: CreateJobInput) {
       stay_type: input.stay_type,
       config_json: input.config_json,
       retry_count: input.retry_count,
+      target_machine: input.target_machine,
     })
     .select("id")
     .single();

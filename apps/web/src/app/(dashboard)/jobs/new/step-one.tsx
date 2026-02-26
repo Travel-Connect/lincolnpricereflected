@@ -34,7 +34,7 @@ interface Props {
 }
 
 export function StepOneScreen({ state, setState }: Props) {
-  const { facilities } = useApp();
+  const { facilities, runners } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lincolnCalendars, setLincolnCalendars] = useState<string[]>([]);
   const [loadingCalendars, setLoadingCalendars] = useState(false);
@@ -314,6 +314,40 @@ export function StepOneScreen({ state, setState }: Props) {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Runner PC */}
+      <section className="rounded-lg border bg-white p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-slate-700">Runner PC</h2>
+        {runners.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            オンラインの Runner がありません。Runner PC を起動してください。
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {runners.map((runner) => (
+              <button
+                key={runner.id}
+                onClick={() =>
+                  setState((s) => ({
+                    ...s,
+                    targetMachine: runner.machine_name,
+                  }))
+                }
+                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  state.targetMachine === runner.machine_name
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                    : "border-slate-200 text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                {state.targetMachine === runner.machine_name && (
+                  <Check className="mb-0.5 mr-1.5 inline size-3.5" />
+                )}
+                {runner.machine_name}
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* File Upload */}

@@ -154,12 +154,18 @@ export async function recordStepFailure(
  * Claim the next PENDING job (oldest first).
  * Uses optimistic locking: only claims if status is still PENDING.
  */
-export async function claimNextJob(): Promise<Job | null> {
-  // Find oldest pending job
-  const { data: pending } = await getSupabase()
+export async function claimNextJob(targetMachine?: string): Promise<Job | null> {
+  // Find oldest pending job (filtered by machine if specified)
+  let query = getSupabase()
     .from("jobs")
     .select("id")
-    .eq("status", "PENDING")
+    .eq("status", "PENDING");
+
+  if (targetMachine) {
+    query = query.eq("target_machine", targetMachine);
+  }
+
+  const { data: pending } = await query
     .order("created_at", { ascending: true })
     .limit(1);
 

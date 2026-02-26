@@ -25,6 +25,7 @@ export interface WizardState {
   calendarMappings: CalendarMappingRow[];
   processBRows: ProcessBMappingRow[];
   retryCount: number;
+  targetMachine: string;
 }
 
 const INITIAL_STATE: WizardState = {
@@ -37,6 +38,7 @@ const INITIAL_STATE: WizardState = {
   calendarMappings: [],
   processBRows: [{ copy_source: "", plan_group_set: "", plan_name: "" }],
   retryCount: 3,
+  targetMachine: "",
 };
 
 export default function NewJobPage() {
@@ -71,7 +73,7 @@ export default function NewJobPage() {
   }
 
   async function handleExecute() {
-    if (!state.facility || !state.file) return;
+    if (!state.facility || !state.file || !state.targetMachine) return;
     setSubmitting(true);
 
     try {
@@ -97,6 +99,7 @@ export default function NewJobPage() {
           process_b_rows: state.processBRows,
         },
         retry_count: state.retryCount,
+        target_machine: state.targetMachine,
       });
 
       // Navigate to job detail page

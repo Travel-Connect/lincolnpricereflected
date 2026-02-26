@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { DashboardShell } from "@/components/layout/dashboard-shell";
-import type { Facility, UserLincolnCredentials } from "@/lib/types/database";
+import type { Facility, UserLincolnCredentials, Runner } from "@/lib/types/database";
 
 export default async function DashboardLayout({
   children,
@@ -32,11 +32,18 @@ export default async function DashboardLayout({
     .eq("user_id", user.id)
     .single();
 
+  // Fetch online runners
+  const { data: runners } = await supabase
+    .from("runners")
+    .select("*")
+    .order("machine_name");
+
   return (
     <DashboardShell
       user={user}
       credentials={(credentials as UserLincolnCredentials) ?? null}
       facilities={(facilities as Facility[]) ?? []}
+      runners={(runners as Runner[]) ?? []}
     >
       {children}
     </DashboardShell>
