@@ -9,7 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@next/swc-win32-x64-msvc": "^16.1.6",
     "@radix-ui/react-slot": "^1.2.4",
     "@supabase/ssr": "^0.8.0",
     "@supabase/supabase-js": "^2.97.0",
@@ -37,6 +36,7 @@
     "typescript": "^5"
   },
   "optionalDependencies": {
+    "@next/swc-win32-x64-msvc": "^16.1.6",
     "@tailwindcss/oxide-win32-x64-msvc": "^4.1.18",
     "lightningcss-win32-x64-msvc": "^1.31.1"
   }
