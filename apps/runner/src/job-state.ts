@@ -242,6 +242,155 @@ export function filterStepsByExecMode(
   }
 }
 
+// --- Calendar sync ---
+
+export interface CalendarSyncRequest {
+  id: string;
+  facility_id: string;
+  status: string;
+}
+
+/** Claim the next PENDING calendar sync request */
+export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null> {
+  const { data: pending } = await getSupabase()
+    .from("calendar_sync_requests")
+    .select("id, facility_id, status")
+    .eq("status", "PENDING")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (!pending || pending.length === 0) return null;
+
+  const reqId = pending[0].id;
+  const { data, error } = await getSupabase()
+    .from("calendar_sync_requests")
+    .update({ status: "RUNNING" })
+    .eq("id", reqId)
+    .eq("status", "PENDING")
+    .select("id, facility_id, status")
+    .single();
+
+  if (error || !data) return null;
+  return data as CalendarSyncRequest;
+}
+
+export interface PlanNameEntry {
+  plan_group_set_name: string;
+  plan_name: string;
+}
+
+/** Complete a calendar sync request */
+export async function completeSyncRequest(
+  reqId: string,
+  calendars: string[],
+  facilityId: string,
+  planGroupSetNames?: string[],
+  planNames?: { planGroupSetName: string; names: string[] }[],
+): Promise<void> {
+  const sb = getSupabase();
+  const now = new Date().toISOString();
+
+  // Replace facility_calendars
+  await sb.from("facility_calendars").delete().eq("facility_id", facilityId);
+  if (calendars.length > 0) {
+    await sb.from("facility_calendars").insert(
+      calendars.map((name) => ({
+        facility_id: facilityId,
+        calendar_name: name,
+        synced_at: now,
+      })),
+    );
+  }
+
+  // Replace facility_plan_group_names (if provided)
+  if (planGroupSetNames) {
+    await sb.from("facility_plan_group_names").delete().eq("facility_id", facilityId);
+    if (planGroupSetNames.length > 0) {
+      await sb.from("facility_plan_group_names").insert(
+        planGroupSetNames.map((name) => ({
+          facility_id: facilityId,
+          plan_group_set_name: name,
+          synced_at: now,
+        })),
+      );
+    }
+  }
+
+  // Replace facility_plan_names (if provided)
+  if (planNames) {
+    console.log(`[sync] Saving plan names: ${planNames.length} sets, ${planNames.reduce((s, p) => s + p.names.length, 0)} total names`);
+    await sb.from("facility_plan_names").delete().eq("facility_id", facilityId);
+    const rows: { facility_id: string; plan_group_set_name: string; plan_name: string; synced_at: string }[] = [];
+    for (const set of planNames) {
+      for (const name of set.names) {
+        rows.push({
+          facility_id: facilityId,
+          plan_group_set_name: set.planGroupSetName,
+          plan_name: name,
+          synced_at: now,
+        });
+      }
+    }
+    // Deduplicate rows (same plan name can appear in multiple room types within a set)
+    const seen = new Set<string>();
+    const uniqueRows = rows.filter((r) => {
+      const key = `${r.plan_group_set_name}::${r.plan_name}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    console.log(`[sync] Built ${uniqueRows.length} unique plan name rows (${rows.length - uniqueRows.length} duplicates removed)`);
+    if (uniqueRows.length > 0) {
+      // Insert in batches of 500 to stay within Supabase limits
+      for (let i = 0; i < uniqueRows.length; i += 500) {
+        const batch = uniqueRows.slice(i, i + 500);
+        const { error: insertErr } = await sb.from("facility_plan_names").insert(batch);
+        if (insertErr) {
+          console.error(`[sync] Failed to insert plan names batch: ${insertErr.message}`);
+        } else {
+          console.log(`[sync] Inserted batch ${i / 500 + 1} (${batch.length} rows)`);
+        }
+      }
+    }
+  } else {
+    console.log("[sync] No planNames provided to completeSyncRequest");
+  }
+
+  // Mark request as done
+  await sb
+    .from("calendar_sync_requests")
+    .update({ status: "DONE", completed_at: now })
+    .eq("id", reqId);
+}
+
+/** Fail a calendar sync request */
+export async function failSyncRequest(
+  reqId: string,
+  errorMessage: string,
+): Promise<void> {
+  await getSupabase()
+    .from("calendar_sync_requests")
+    .update({
+      status: "ERROR",
+      error_message: errorMessage,
+      completed_at: new Date().toISOString(),
+    })
+    .eq("id", reqId);
+}
+
+/** Get facility info by ID */
+export async function getFacilityById(
+  facilityId: string,
+): Promise<{ lincoln_id: string; name: string }> {
+  const { data, error } = await getSupabase()
+    .from("facilities")
+    .select("lincoln_id, name")
+    .eq("id", facilityId)
+    .single();
+  if (error || !data) throw new Error(`Facility not found: ${facilityId}`);
+  return data;
+}
+
 /** Download file from Supabase Storage to local temp path */
 export async function downloadFromStorage(
   storagePath: string,

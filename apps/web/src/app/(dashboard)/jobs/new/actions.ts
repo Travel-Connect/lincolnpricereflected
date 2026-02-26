@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { ExecMode, Environment } from "@/lib/types/database";
 
@@ -14,7 +13,10 @@ export async function uploadExcel(formData: FormData) {
   const file = formData.get("file") as File;
   if (!file || file.size === 0) throw new Error("No file provided");
 
-  const path = `${user.id}/${Date.now()}_${file.name}`;
+  // Supabase Storage keys only accept ASCII — extract extension and use timestamp
+  const ext = file.name.replace(/^.*\./, ".") || ".xlsx";
+  const safeExt = ext.replace(/[^a-zA-Z0-9.]/g, "");
+  const path = `${user.id}/${Date.now()}${safeExt}`;
   const { error } = await supabase.storage
     .from("lincoln-excel-uploads")
     .upload(path, file);
@@ -61,7 +63,7 @@ export async function createJob(input: CreateJobInput) {
 
   if (error) throw new Error(`Job creation failed: ${error.message}`);
 
-  redirect(`/jobs/${data.id}`);
+  return { id: data.id };
 }
 
 export async function saveCalendarPattern(input: {
@@ -136,6 +138,123 @@ export async function saveProcessBPattern(input: {
     });
     if (error) throw new Error(error.message);
   }
+}
+
+export async function fetchFacilityCalendars(
+  facilityId: string,
+): Promise<string[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("facility_calendars")
+    .select("calendar_name")
+    .eq("facility_id", facilityId)
+    .order("calendar_name");
+
+  if (error) throw new Error(`Failed to fetch calendars: ${error.message}`);
+  return (data ?? []).map((row) => row.calendar_name);
+}
+
+export async function deleteCalendarPattern(patternId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase
+    .from("calendar_patterns")
+    .delete()
+    .eq("id", patternId)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function fetchFacilityPlanGroupNames(
+  facilityId: string,
+): Promise<string[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("facility_plan_group_names")
+    .select("plan_group_set_name")
+    .eq("facility_id", facilityId)
+    .order("plan_group_set_name");
+
+  if (error) throw new Error(`Failed to fetch plan group names: ${error.message}`);
+  return (data ?? []).map((row) => row.plan_group_set_name);
+}
+
+export async function fetchFacilityPlanNames(
+  facilityId: string,
+): Promise<Record<string, string[]>> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("facility_plan_names")
+    .select("plan_group_set_name, plan_name")
+    .eq("facility_id", facilityId)
+    .order("plan_group_set_name")
+    .order("plan_name");
+
+  if (error) throw new Error(`Failed to fetch plan names: ${error.message}`);
+
+  // Group by plan_group_set_name
+  const grouped: Record<string, string[]> = {};
+  for (const row of data ?? []) {
+    if (!grouped[row.plan_group_set_name]) {
+      grouped[row.plan_group_set_name] = [];
+    }
+    grouped[row.plan_group_set_name].push(row.plan_name);
+  }
+  return grouped;
+}
+
+export async function deleteProcessBPattern(patternId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { error } = await supabase
+    .from("process_b_patterns")
+    .delete()
+    .eq("id", patternId)
+    .eq("user_id", user.id);
+
+  if (error) throw new Error(error.message);
+}
+
+export async function requestCalendarSync(
+  facilityId: string,
+): Promise<{ id: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Unauthorized");
+
+  const { data, error } = await supabase
+    .from("calendar_sync_requests")
+    .insert({ facility_id: facilityId })
+    .select("id")
+    .single();
+
+  if (error) throw new Error(`Sync request failed: ${error.message}`);
+  return { id: data.id };
+}
+
+export async function getSyncRequestStatus(
+  reqId: string,
+): Promise<{ status: string; error_message?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase
+    .from("calendar_sync_requests")
+    .select("status, error_message")
+    .eq("id", reqId)
+    .single();
+
+  if (error) throw new Error(`Failed to check sync status: ${error.message}`);
+  return data;
 }
 
 export async function loadPatterns(facilityId: string) {

@@ -38,13 +38,9 @@ export function AppProvider({
   credentials,
   facilities,
 }: AppProviderProps) {
-  const defaultFacility =
-    facilities.find((f) => f.id === credentials?.default_facility_id) ??
-    facilities[0] ??
-    null;
-
+  // Default to null — user must explicitly select a facility
   const [currentFacility, setCurrentFacility] = useState<Facility | null>(
-    defaultFacility
+    null
   );
   const [environment, setEnvironment] = useState<Environment>("production");
 

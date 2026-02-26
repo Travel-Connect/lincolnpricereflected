@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
 import {
@@ -32,12 +31,33 @@ const STEP_LABELS: Record<string, string> = {
   STEPC: "出力検証",
 };
 
-const PHASE_GROUPS = [
+const PHASE_GROUPS_FULL = [
   { label: "ログイン/準備", steps: ["PARSE", "STEPA"] },
   { label: "処理A", steps: ["STEP0"] },
   { label: "処理B", steps: ["STEPB"] },
   { label: "検証", steps: ["STEPC"] },
 ];
+
+function getVisibleSteps(execMode: string): string[] {
+  switch (execMode) {
+    case "A_only":
+      return ["PARSE", "STEPA", "STEP0", "STEPC"];
+    case "B_only":
+      return ["PARSE", "STEPB", "STEPC"];
+    default: // A_and_B
+      return ["PARSE", "STEPA", "STEP0", "STEPB", "STEPC"];
+  }
+}
+
+function getPhaseGroups(execMode: string) {
+  const visible = getVisibleSteps(execMode);
+  return PHASE_GROUPS_FULL
+    .map((g) => ({
+      ...g,
+      steps: g.steps.filter((s) => visible.includes(s)),
+    }))
+    .filter((g) => g.steps.length > 0);
+}
 
 interface Props {
   initialJob: Job;
@@ -50,71 +70,51 @@ export function JobDetailClient({
   initialSteps,
   initialArtifacts,
 }: Props) {
-  const router = useRouter();
   const [job, setJob] = useState<Job>(initialJob);
   const [steps, setSteps] = useState<JobStep[]>(initialSteps);
   const [artifacts] = useState<Artifact[]>(initialArtifacts);
   const [logs, setLogs] = useState<JobLog[]>([]);
   const [showAbortConfirm, setShowAbortConfirm] = useState(false);
 
-  // Supabase Realtime subscriptions
+  // Poll for updates while job is active (3s interval)
+  const isActive =
+    job.status === "PENDING" ||
+    job.status === "RUNNING" ||
+    job.status === "AWAITING_2FA";
+
   useEffect(() => {
+    if (!isActive) return;
+
     const supabase = createClient();
-
-    const channel = supabase
-      .channel(`job-${job.id}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "lincoln",
-          table: "jobs",
-          filter: `id=eq.${job.id}`,
-        },
-        (payload) => {
-          setJob((prev) => ({ ...prev, ...payload.new }));
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "lincoln",
-          table: "job_steps",
-          filter: `job_id=eq.${job.id}`,
-        },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            setSteps((prev) => [...prev, payload.new as unknown as JobStep]);
-          } else if (payload.eventType === "UPDATE") {
-            setSteps((prev) =>
-              prev.map((s) =>
-                s.id === (payload.new as { id: string }).id
-                  ? { ...s, ...payload.new }
-                  : s
-              )
-            );
-          }
-        }
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "lincoln",
-          table: "job_logs",
-          filter: `job_id=eq.${job.id}`,
-        },
-        (payload) => {
-          setLogs((prev) => [...prev, payload.new as unknown as JobLog]);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
+    const poll = async () => {
+      const [jobRes, stepsRes, logsRes] = await Promise.all([
+        supabase
+          .from("jobs")
+          .select("*, facility:facilities(*)")
+          .eq("id", job.id)
+          .single(),
+        supabase
+          .from("job_steps")
+          .select("*")
+          .eq("job_id", job.id)
+          .order("started_at", { ascending: true, nullsFirst: false }),
+        supabase
+          .from("job_logs")
+          .select("*")
+          .eq("job_id", job.id)
+          .order("created_at", { ascending: true }),
+      ]);
+      if (jobRes.data) setJob(jobRes.data as unknown as Job);
+      if (stepsRes.data) setSteps(stepsRes.data as unknown as JobStep[]);
+      if (logsRes.data) setLogs(logsRes.data as unknown as JobLog[]);
     };
-  }, [job.id]);
+
+    const interval = setInterval(poll, 3000);
+    // Fetch immediately on mount too
+    poll();
+
+    return () => clearInterval(interval);
+  }, [job.id, isActive]);
 
   async function handleAbort() {
     const supabase = createClient();
@@ -145,7 +145,6 @@ export function JobDetailClient({
     }
   }
 
-  const isActive = job.status === "RUNNING" || job.status === "AWAITING_2FA";
   const isFailed = job.status === "FAILED";
   const isSuccess = job.status === "SUCCESS";
 
@@ -276,7 +275,7 @@ export function JobDetailClient({
           実行フェーズ
         </h3>
         <div className="flex gap-2">
-          {PHASE_GROUPS.map(({ label, steps: phaseSteps }) => {
+          {getPhaseGroups(job.execution_mode).map(({ label, steps: phaseSteps }) => {
             const phaseStatus = getPhaseStatus(phaseSteps, steps, job);
             return (
               <div
@@ -294,7 +293,7 @@ export function JobDetailClient({
       <div className="rounded-lg border bg-white p-5 space-y-3">
         <h3 className="text-sm font-semibold text-slate-700">ステップ詳細</h3>
         <div className="space-y-2">
-          {(["PARSE", "STEPA", "STEP0", "STEPB", "STEPC"] as const).map(
+          {getVisibleSteps(job.execution_mode).map(
             (stepName) => {
               const step = steps.find((s) => s.step === stepName);
               return (
@@ -432,17 +431,10 @@ export function JobDetailClient({
 function getPhaseStatus(
   phaseSteps: string[],
   allSteps: JobStep[],
-  job: Job
-): "pending" | "running" | "success" | "failed" | "skipped" {
+  _job: Job
+): "pending" | "running" | "success" | "failed" {
   const matched = allSteps.filter((s) => phaseSteps.includes(s.step));
-  if (matched.length === 0) {
-    // Check if these steps should be skipped based on exec_mode
-    if (job.execution_mode === "A_only" && phaseSteps.includes("STEPB"))
-      return "skipped";
-    if (job.execution_mode === "B_only" && phaseSteps.includes("STEP0"))
-      return "skipped";
-    return "pending";
-  }
+  if (matched.length === 0) return "pending";
   if (matched.some((s) => s.status === "FAILED")) return "failed";
   if (matched.some((s) => s.status === "RUNNING")) return "running";
   if (matched.every((s) => s.status === "SUCCESS")) return "success";
@@ -454,7 +446,6 @@ const phaseStatusStyles: Record<string, string> = {
   running: "border-blue-300 bg-blue-50 text-blue-700",
   success: "border-green-300 bg-green-50 text-green-700",
   failed: "border-red-300 bg-red-50 text-red-700",
-  skipped: "border-slate-100 bg-slate-25 text-slate-300",
 };
 
 const artifactTypeLabel: Record<string, string> = {

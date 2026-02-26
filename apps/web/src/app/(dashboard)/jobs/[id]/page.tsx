@@ -24,7 +24,7 @@ export default async function JobDetailPage({
       .from("job_steps")
       .select("*")
       .eq("job_id", id)
-      .order("created_at", { ascending: true }),
+      .order("started_at", { ascending: true, nullsFirst: false }),
     supabase
       .from("artifacts")
       .select("*")

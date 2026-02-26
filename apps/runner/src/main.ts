@@ -46,24 +46,32 @@ import {
   saveSession,
   clearSession,
 } from "./auth/index.js";
+import { processNextSyncRequest } from "./sync-calendar.js";
 
 const POLL_INTERVAL_MS = 5000;
 
 /** Parse CLI args */
-function parseArgs(): { mode: "single"; jobId: string } | { mode: "poll" } {
+interface CliArgs {
+  mode: "single" | "poll";
+  jobId?: string;
+  keepBrowser: boolean;
+}
+
+function parseArgs(): CliArgs {
   const args = process.argv.slice(2);
+  const keepBrowser = args.includes("--keep-browser");
 
   if (args.includes("--poll")) {
-    return { mode: "poll" };
+    return { mode: "poll", keepBrowser };
   }
 
   const idx = args.indexOf("--job-id");
   if (idx === -1 || idx + 1 >= args.length) {
-    console.error("Usage: npx tsx src/main.ts --job-id <uuid>");
-    console.error("       npx tsx src/main.ts --poll");
+    console.error("Usage: npx tsx src/main.ts --job-id <uuid> [--keep-browser]");
+    console.error("       npx tsx src/main.ts --poll [--keep-browser]");
     process.exit(1);
   }
-  return { mode: "single", jobId: args[idx + 1] };
+  return { mode: "single", jobId: args[idx + 1], keepBrowser };
 }
 
 /** Resolve the Excel file path: download from Storage if needed */
@@ -112,7 +120,10 @@ async function getCredentials(job: Job): Promise<UserCredentials> {
 }
 
 /** Execute a single job */
-async function executeJob(job: Job): Promise<void> {
+async function executeJob(
+  job: Job,
+  keepBrowserOpen = false,
+): Promise<void> {
   const jobId = job.id;
   console.log(`[runner] Starting job ${jobId}`);
   await writeJobLog(jobId, null, "info", "ジョブ開始");
@@ -123,7 +134,7 @@ async function executeJob(job: Job): Promise<void> {
 
   // Determine remaining steps, filtered by exec_mode
   const allNextSteps = getNextSteps(job.last_completed_step);
-  const steps = filterStepsByExecMode(
+  let steps = filterStepsByExecMode(
     allNextSteps,
     job.execution_mode ?? "A_and_B",
   );
@@ -136,13 +147,19 @@ async function executeJob(job: Job): Promise<void> {
   console.log(`[runner] Steps to execute: ${steps.join(" → ")}`);
   await writeJobLog(jobId, null, "info", `実行ステップ: ${steps.join(" → ")}`);
 
-  // Launch browser
+  // Launch browser (maximized)
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
-  const browser = await chromium.launch({ headless });
+  const browser = await chromium.launch({
+    headless,
+    args: ["--start-maximized"],
+  });
   const contextOptions = hasSavedSession()
     ? { storageState: getSessionPath() }
     : {};
-  const context = await browser.newContext(contextOptions);
+  const context = await browser.newContext({
+    ...contextOptions,
+    viewport: null, // use full window size (maximized)
+  });
   const page = await context.newPage();
 
   const recorder = new NetworkRecorder();
@@ -151,9 +168,18 @@ async function executeJob(job: Job): Promise<void> {
   try {
     // Auth (skip for PARSE-only)
     const needsBrowser = steps.some((s) => s !== "PARSE");
+    let didFreshLogin = false;
     if (needsBrowser) {
       const creds = await getCredentials(job);
-      await performAuth(page, context, jobId, creds);
+      didFreshLogin = await performAuth(page, context, jobId, creds);
+    }
+
+    // If fresh login was performed, ensure STEPA runs (to switch facility)
+    // Fresh login lands on default facility, so STEPA must re-run
+    if (didFreshLogin && !steps.includes("STEPA")) {
+      console.log("[runner] Fresh login detected — adding STEPA to ensure facility switch");
+      await writeJobLog(jobId, null, "info", "再ログイン検出 — 施設切替(STEPA)を再実行");
+      steps.unshift("STEPA");
     }
 
     // Execute each step
@@ -213,26 +239,38 @@ async function executeJob(job: Job): Promise<void> {
     await updateJobStatus(jobId, "SUCCESS");
     await writeJobLog(jobId, null, "info", "ジョブ正常完了");
     console.log("[runner] ✓ Job completed successfully");
+
+    // Navigate to verification page for visual inspection
+    await navigateToVerificationPage(page, jobWithLocalPath);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[runner] ✗ Job failed: ${message}`);
     await updateJobStatus(jobId, "FAILED");
   } finally {
     recorder.detach(page);
-    await browser.close();
+    if (keepBrowserOpen) {
+      console.log(
+        "[runner] ブラウザを開いたまま保持中。確認後 Ctrl+C で終了してください。",
+      );
+      // Block forever to keep browser alive — Ctrl+C to exit
+      await new Promise<never>(() => {});
+    } else {
+      await browser.close();
+    }
   }
 }
 
 /**
  * Perform Lincoln authentication.
  * Tries saved session first; falls back to fresh login + 2FA.
+ * Returns true if a fresh login was performed (session was not restored).
  */
 async function performAuth(
   page: import("playwright").Page,
   context: import("playwright").BrowserContext,
   jobId: string,
   creds: UserCredentials,
-): Promise<void> {
+): Promise<boolean> {
   // Try saved session
   if (hasSavedSession()) {
     console.log("[runner] Attempting session restore...");
@@ -248,7 +286,7 @@ async function performAuth(
     if (title.includes("トップページ") || title.includes("メニュー")) {
       console.log("[runner] Session restored — skipping login");
       await writeJobLog(jobId, null, "info", "セッション復元成功");
-      return;
+      return false; // session restored, no fresh login
     }
 
     console.log("[runner] Saved session expired — performing fresh login");
@@ -288,19 +326,82 @@ async function performAuth(
   await saveSession(context);
   await writeJobLog(jobId, null, "info", "認証完了");
   console.log("[runner] Auth completed successfully");
+  return true; // fresh login performed
 }
 
-/** Polling loop: continuously claim and execute PENDING jobs */
-async function pollLoop(): Promise<void> {
+const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
+
+/**
+ * Navigate to the 5010 price management page for visual verification.
+ * Selects the plan group set configured in the job if available.
+ */
+async function navigateToVerificationPage(
+  page: import("playwright").Page,
+  job: Job,
+): Promise<void> {
+  try {
+    const url5010 = LINCOLN_BASE + "Ascsc5010InitAction.do";
+    console.log("[runner] Navigating to 5010 (料金管理) for verification...");
+    await page.goto(url5010, { waitUntil: "networkidle", timeout: 30000 });
+    console.log(`[runner] On page: ${await page.title()}`);
+
+    // Try to select the configured plan group set
+    const planGroupSetNames =
+      (job as any).config_json?.plan_group_set_names as string[] | undefined;
+    const targetName = planGroupSetNames?.[0];
+
+    if (targetName) {
+      console.log(
+        `[runner] Looking for plan group set: "${targetName}" on 5010...`,
+      );
+
+      // Plan group set items use the same selector as stepB
+      const setItem = page
+        .locator('a[onclick*="selectPlanGroupSet"]')
+        .filter({ hasText: targetName })
+        .first();
+
+      if (await setItem.isVisible({ timeout: 5000 }).catch(() => false)) {
+        await setItem.click();
+        await page
+          .waitForLoadState("networkidle", { timeout: 15000 })
+          .catch(() => {});
+        await page.waitForTimeout(1000);
+        console.log(`[runner] Plan group set "${targetName}" selected on 5010`);
+      } else {
+        console.log(
+          `[runner] Plan group set "${targetName}" not found on 5010 — showing default view`,
+        );
+      }
+    }
+  } catch (err) {
+    // Non-critical — don't fail the job for navigation issues
+    console.log(
+      `[runner] Could not navigate to 5010: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
+/** Polling loop: continuously claim and execute PENDING jobs and sync requests */
+async function pollLoop(keepBrowser: boolean): Promise<void> {
   console.log("[runner] Starting poll mode (press Ctrl+C to stop)");
   console.log(`[runner] Poll interval: ${POLL_INTERVAL_MS}ms`);
+  if (keepBrowser) {
+    console.log("[runner] --keep-browser: ジョブ完了後もブラウザを保持します");
+  }
 
   while (true) {
     try {
+      // Check for calendar sync requests first (lightweight)
+      const didSync = await processNextSyncRequest();
+      if (didSync) continue; // Check for more work immediately
+
+      // Check for pending jobs
       const job = await claimNextJob();
       if (job) {
         console.log(`[runner] Claimed job ${job.id}`);
-        await executeJob(job);
+        await executeJob(job, keepBrowser);
+        continue; // Check for more work immediately
       }
     } catch (err) {
       console.error(
@@ -318,11 +419,11 @@ async function main(): Promise<void> {
   const args = parseArgs();
 
   if (args.mode === "poll") {
-    await pollLoop();
+    await pollLoop(args.keepBrowser);
   } else {
-    const job = await getJob(args.jobId);
-    await updateJobStatus(args.jobId, "RUNNING");
-    await executeJob(job);
+    const job = await getJob(args.jobId!);
+    await updateJobStatus(args.jobId!, "RUNNING");
+    await executeJob(job, args.keepBrowser);
   }
 }
 

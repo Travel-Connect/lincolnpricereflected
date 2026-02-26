@@ -1,17 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { LogIn, AlertCircle } from "lucide-react";
+import { LogIn, AlertCircle, CheckCircle2 } from "lucide-react";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,8 +29,10 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/history");
-    router.refresh();
+    // Open dashboard in a new tab, then show success on login page
+    window.open("/history", "_blank");
+    setLoading(false);
+    setSuccess(true);
   }
 
   return (
@@ -95,23 +96,43 @@ export default function LoginPage() {
             </div>
           )}
 
-          <Button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-indigo-600 hover:bg-indigo-700"
-          >
-            {loading ? (
-              <span className="flex items-center gap-2">
-                <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                ログイン中...
-              </span>
-            ) : (
+          {success && (
+            <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+              <CheckCircle2 className="size-4 shrink-0" />
+              ログイン成功 — 別タブで開きました
+            </div>
+          )}
+
+          {success ? (
+            <Button
+              type="button"
+              onClick={() => window.open("/history", "_blank")}
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+            >
               <span className="flex items-center gap-2">
                 <LogIn className="size-4" />
-                ログイン
+                もう一度開く
               </span>
-            )}
-          </Button>
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-indigo-600 hover:bg-indigo-700"
+            >
+              {loading ? (
+                <span className="flex items-center gap-2">
+                  <span className="size-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+                  ログイン中...
+                </span>
+              ) : (
+                <span className="flex items-center gap-2">
+                  <LogIn className="size-4" />
+                  ログイン
+                </span>
+              )}
+            </Button>
+          )}
         </form>
 
         <p className="text-center text-xs text-slate-400">

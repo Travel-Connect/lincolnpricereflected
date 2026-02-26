@@ -67,6 +67,7 @@
     "autoCompleteList": "ul#ui-id-1",
     "autoCompleteItem": "ul#ui-id-1 li.ui-menu-item a",
     "planGroupSetItem": "a[onclick*=\"selectPlanGroupSet\"]",
+    "planGroupSelect": "select#sectionGroupSelect2",
     "planGroupSearchBtn": "#sectionTableSearchBtn3",
     "planGroupSearchInput": "input#planGrpNmSearchText",
     "monthSelect": "select[name=\"targetYm\"]",

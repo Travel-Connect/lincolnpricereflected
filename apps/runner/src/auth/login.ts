@@ -49,13 +49,16 @@ export async function login(
 
   // Check for force-login (duplicate session)
   const forceLoginSelector = getSelector("auth.forceLoginButton");
-  if (await page.locator(forceLoginSelector).isVisible().catch(() => false)) {
+  try {
+    await page.locator(forceLoginSelector).waitFor({ state: "visible", timeout: 3000 });
     console.log("[auth] Duplicate session detected — clicking force login");
     wasForceLogin = true;
     await page.locator(forceLoginSelector).click();
     await page.waitForLoadState("load", { timeout: 15000 }).catch(() => {});
     await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
     await page.waitForTimeout(2000);
+  } catch {
+    // No force login button appeared — continue
   }
 
   const url = page.url();
@@ -67,7 +70,36 @@ export async function login(
     return err?.textContent?.trim() || null;
   });
 
-  if (hasError && !wasForceLogin) {
+  // If we see a double-login error message but didn't handle force login yet, try once more
+  if (hasError && !wasForceLogin && hasError.includes("MASC0199")) {
+    console.log("[auth] Double-login error detected — retrying force login");
+    await page.waitForTimeout(1000);
+    const forceBtnVisible = await page.locator(forceLoginSelector).isVisible().catch(() => false);
+    if (forceBtnVisible) {
+      wasForceLogin = true;
+      await page.locator(forceLoginSelector).click();
+      await page.waitForLoadState("load", { timeout: 15000 }).catch(() => {});
+      await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+      await page.waitForTimeout(2000);
+    } else {
+      // Force login button not found — try clicking login again, which often triggers force login
+      console.log("[auth] Force login button not found — re-clicking login");
+      await page.locator(btnSelector).click();
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      // Check again for force login
+      try {
+        await page.locator(forceLoginSelector).waitFor({ state: "visible", timeout: 3000 });
+        wasForceLogin = true;
+        await page.locator(forceLoginSelector).click();
+        await page.waitForLoadState("load", { timeout: 15000 }).catch(() => {});
+        await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+        await page.waitForTimeout(2000);
+      } catch {
+        throw new Error(`[auth] Login failed: ${hasError}`);
+      }
+    }
+  } else if (hasError && !wasForceLogin) {
     throw new Error(`[auth] Login failed: ${hasError}`);
   }
 

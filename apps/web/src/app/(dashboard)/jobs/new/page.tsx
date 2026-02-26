@@ -85,7 +85,7 @@ export default function NewJobPage() {
         originalName = result.originalName;
       }
 
-      await createJob({
+      const result = await createJob({
         facility_id: state.facility.id,
         execution_mode: state.execMode,
         environment,
@@ -98,6 +98,9 @@ export default function NewJobPage() {
         },
         retry_count: state.retryCount,
       });
+
+      // Navigate to job detail page
+      router.push(`/jobs/${result.id}`);
     } catch (err) {
       toast.error(
         `ジョブ作成に失敗しました: ${err instanceof Error ? err.message : "不明なエラー"}`

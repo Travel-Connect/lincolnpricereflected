@@ -12,7 +12,7 @@ export function Header() {
       {/* Left: Facility */}
       <div className="flex items-center gap-2 text-sm text-slate-600">
         <Building2 className="size-4" />
-        <span>{currentFacility?.name ?? "施設未選択"}</span>
+        <span>{currentFacility?.name ?? ""}</span>
       </div>
 
       {/* Right: Environment toggle */}
