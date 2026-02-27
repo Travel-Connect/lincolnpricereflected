@@ -256,12 +256,19 @@ export interface CalendarSyncRequest {
   status: string;
 }
 
-/** Claim the next PENDING calendar sync request */
+/** Claim the next PENDING calendar sync request for this machine */
 export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null> {
-  const { data: pending } = await getSupabase()
+  const machineName = process.env.COMPUTERNAME ?? "";
+  let query = getSupabase()
     .from("calendar_sync_requests")
     .select("id, facility_id, status")
-    .eq("status", "PENDING")
+    .eq("status", "PENDING");
+
+  if (machineName) {
+    query = query.eq("target_machine", machineName);
+  }
+
+  const { data: pending } = await query
     .order("created_at", { ascending: true })
     .limit(1);
 

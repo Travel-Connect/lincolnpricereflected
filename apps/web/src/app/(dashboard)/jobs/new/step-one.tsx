@@ -196,7 +196,7 @@ export function StepOneScreen({ state, setState }: Props) {
     setSyncError(null);
 
     try {
-      const { id: reqId } = await requestCalendarSync(state.facility.id);
+      const { id: reqId } = await requestCalendarSync(state.facility.id, state.targetMachine || undefined);
 
       // Poll for completion every 3 seconds
       const facilityId = state.facility.id;

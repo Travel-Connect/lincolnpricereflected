@@ -240,6 +240,7 @@ export async function deleteProcessBPattern(patternId: string) {
 
 export async function requestCalendarSync(
   facilityId: string,
+  targetMachine?: string,
 ): Promise<{ id: string }> {
   const supabase = await createClient();
   const {
@@ -247,9 +248,12 @@ export async function requestCalendarSync(
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
+  const row: Record<string, unknown> = { facility_id: facilityId };
+  if (targetMachine) row.target_machine = targetMachine;
+
   const { data, error } = await supabase
     .from("calendar_sync_requests")
-    .insert({ facility_id: facilityId })
+    .insert(row)
     .select("id")
     .single();
 

@@ -280,34 +280,70 @@ async function scrapePlanNamesPerSet(page: Page): Promise<PlanGroupSetPlanNames[
 
   if (setNames.length === 0) return [];
 
+  // The 5050 page uses a dual-list UI:
+  //   LEFT  (#sectionGroupSelect)  = plans IN the selected plan group set
+  //   RIGHT (#sectionGroupSelect2) = plans NOT in the set
+  // selectPlanGroupSet() fires an AJAX call, and on success:
+  //   1. Removes the response plans from both selects
+  //   2. Moves remaining LEFT options to RIGHT
+  //   3. Sets LEFT.html = AJAX response HTML (the correct plans)
+  // So we must read LEFT, not RIGHT.
+  const planSelectLeft = "select#sectionGroupSelect";
+
   const results: PlanGroupSetPlanNames[] = [];
 
   for (let i = 0; i < setNames.length; i++) {
     const setName = setNames[i];
     console.log(`[sync] Clicking plan group set [${i + 1}/${setNames.length}]: ${setName}`);
 
-    // Re-query links each time since page reloads after click
+    // Re-query links each time (page DOM may have changed after AJAX)
     const links = await page.$$(setSelector);
     if (i >= links.length) {
       console.log(`[sync]   → Link index ${i} out of bounds (only ${links.length} links), skipping`);
       continue;
     }
 
-    await links[i].click();
+    // Click and wait for the AJAX response. selectPlanGroupSet() calls
+    // PlanGroupSetConfigSelectPlanGroupAction.do via $.ajax(). The jQuery
+    // callback synchronously updates LEFT with the response HTML.
+    // NOTE: page.waitForLoadState("networkidle") does NOT work here because
+    // the page is already loaded — it resolves immediately without waiting
+    // for new XHR requests. We must use waitForResponse() instead.
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes("PlanGroupSetConfigSelectPlanGroupAction.do"),
+        { timeout: 15000 },
+      ),
+      links[i].click(),
+    ]);
 
-    // Wait for page reload / network activity to settle
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    // Brief wait to ensure jQuery callback has processed the response
+    // and updated the DOM (LEFT select HTML replacement).
+    await page.waitForTimeout(300);
 
-    // Read plan names from select options (excluding empty/default options)
+    // Read plan names from LEFT select optgroups.
+    // Optgroup label = room type (e.g. "--和室コンド--"), option text = plan name.
+    // Format: "--和室コンド--|【+40%】海外ラック単泊_素泊まり"
     const planNames = await page.$$eval(
-      `${planSelectSelector} option`,
-      (options) =>
-        options
-          .map((opt) => (opt.textContent || "").trim())
-          .filter((name) => name.length > 0),
+      `${planSelectLeft} optgroup`,
+      (optgroups) => {
+        const results: string[] = [];
+        for (const og of optgroups) {
+          const roomType = (og.getAttribute("label") || "").trim();
+          if (!roomType) continue;
+
+          for (const opt of og.querySelectorAll("option")) {
+            const planName = (opt.textContent || "").trim();
+            if (planName) {
+              results.push(`${roomType}|${planName}`);
+            }
+          }
+        }
+        return results;
+      },
     );
 
-    console.log(`[sync]   → ${planNames.length} plans: ${planNames.slice(0, 3).join(", ")}${planNames.length > 3 ? "..." : ""}`);
+    console.log(`[sync]   → ${planNames.length} plan entries: ${planNames.slice(0, 3).join(", ")}${planNames.length > 3 ? "..." : ""}`);
     results.push({ planGroupSetName: setName, names: planNames });
   }
 

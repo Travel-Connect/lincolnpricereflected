@@ -212,7 +212,7 @@ export function StepTwoScreen({ state, setState }: Props) {
     setSyncError(null);
 
     try {
-      const { id: reqId } = await requestCalendarSync(state.facility.id);
+      const { id: reqId } = await requestCalendarSync(state.facility.id, state.targetMachine || undefined);
       const facilityId = state.facility.id;
 
       syncPollRef.current = setInterval(async () => {
