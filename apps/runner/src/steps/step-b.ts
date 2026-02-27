@@ -149,7 +149,8 @@ export async function run(
     const monthOptionValue = `${month}_0`;
     const monthSelectLocator = page.locator(monthSelect);
 
-    // Check if the month option exists
+    // Check if the month option exists (with stability wait)
+    await page.waitForLoadState("domcontentloaded", { timeout: 10000 }).catch(() => {});
     const optionExists = await page.evaluate(
       ({ sel, val }) => {
         const select = document.querySelector(sel) as HTMLSelectElement | null;
@@ -171,14 +172,15 @@ export async function run(
     if (mi === 0 || currentVal !== monthOptionValue) {
       console.log(`[STEPB] Selecting month: ${monthOptionValue}`);
       await monthSelectLocator.selectOption(monthOptionValue);
-      // Trigger doDisplay() explicitly via JavaScript
+      // Trigger doDisplay() explicitly via JavaScript — causes page navigation
       await page.evaluate(() => {
         if (typeof (window as any).doDisplay === "function") {
           (window as any).doDisplay();
         }
       });
-      await page.waitForLoadState("networkidle", { timeout: 30000 });
-      await page.waitForTimeout(1000);
+      await page.waitForLoadState("load", { timeout: 30000 });
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await page.waitForTimeout(2000);
     }
 
     console.log(`[STEPB] On month: ${monthLabel}`);
@@ -411,14 +413,29 @@ export async function run(
 
     const sendButton = page.locator(sendBtn);
     await sendButton.waitFor({ state: "visible", timeout: 5000 });
-    await Promise.all([
-      page.waitForLoadState("networkidle", { timeout: 60000 }),
-      sendButton.click(),
-    ]);
-    await page.waitForTimeout(2000);
 
-    // Check for errors after send
-    const sendError = await checkPageError(page);
+    // doSend triggers: confirm dialog → form POST → page navigation
+    // Use waitForNavigation pattern to handle the full navigation cycle
+    await sendButton.click();
+    // Wait for the confirm dialog to be handled and navigation to complete
+    await page.waitForLoadState("load", { timeout: 60000 });
+    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
+    // Extra wait: Lincoln may execute JS after load that triggers secondary navigation
+    await page.waitForTimeout(3000);
+    // Final stability check — ensure no more navigations are pending
+    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+
+    // Check for errors after send (with retry for transient context issues)
+    let sendError: string | null = null;
+    try {
+      sendError = await checkPageError(page);
+    } catch (evalErr) {
+      // Context may still be transitioning — wait and retry once
+      console.log(`[STEPB] Post-send eval failed, retrying: ${evalErr instanceof Error ? evalErr.message : evalErr}`);
+      await page.waitForTimeout(3000);
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      sendError = await checkPageError(page);
+    }
     if (sendError) {
       console.log(`[STEPB] Post-send message: ${sendError}`);
       // MASC0155 = "変更内容がありません" — ranks already match, not an error
