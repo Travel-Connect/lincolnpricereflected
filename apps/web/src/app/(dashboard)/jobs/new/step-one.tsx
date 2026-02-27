@@ -86,20 +86,25 @@ export function StepOneScreen({ state, setState }: Props) {
       return;
     }
     let cancelled = false;
-    loadPatterns(state.facility.id)
+    const facilityId = state.facility.id;
+    loadPatterns(facilityId)
       .then(({ calendarPatterns }) => {
-        if (!cancelled) {
-          setSavedPatterns(calendarPatterns as CalendarPattern[]);
-          // Auto-select default pattern
-          const def = (calendarPatterns as CalendarPattern[]).find((p) => p.is_default);
-          if (def) {
-            setSelectedPatternId(def.id);
-            setPatternName(def.name);
-            setState((s) => ({ ...s, calendarMappings: def.mappings }));
-          } else {
-            setSelectedPatternId("");
-            setPatternName("");
-          }
+        if (cancelled) return;
+        const patterns = calendarPatterns as CalendarPattern[];
+        setSavedPatterns(patterns);
+
+        // Auto-select: last used (localStorage) > is_default > none
+        const lastUsedId = localStorage.getItem(`lincoln_last_pattern_${facilityId}`);
+        const lastUsed = lastUsedId ? patterns.find((p) => p.id === lastUsedId) : null;
+        const target = lastUsed ?? patterns.find((p) => p.is_default) ?? null;
+
+        if (target) {
+          setSelectedPatternId(target.id);
+          setPatternName(target.name);
+          setState((s) => ({ ...s, calendarMappings: target.mappings }));
+        } else {
+          setSelectedPatternId("");
+          setPatternName("");
         }
       })
       .catch(() => {
@@ -127,9 +132,13 @@ export function StepOneScreen({ state, setState }: Props) {
       if (pattern) {
         setPatternName(pattern.name);
         setState((s) => ({ ...s, calendarMappings: pattern.mappings }));
+        // Remember last used pattern per facility
+        if (state.facility) {
+          localStorage.setItem(`lincoln_last_pattern_${state.facility.id}`, patternId);
+        }
       }
     },
-    [savedPatterns, setState],
+    [savedPatterns, setState, state.facility],
   );
 
   /** Save current mappings as a pattern */
@@ -143,7 +152,7 @@ export function StepOneScreen({ state, setState }: Props) {
 
     setSavingPattern(true);
     try {
-      await saveCalendarPattern({
+      const saved = await saveCalendarPattern({
         facility_id: state.facility.id,
         name: patternName.trim(),
         is_default: false,
@@ -151,6 +160,12 @@ export function StepOneScreen({ state, setState }: Props) {
         ...(isUpdate ? { id: selectedPatternId } : {}),
       });
       await refreshPatterns();
+      // Remember as last used pattern
+      const savedId = saved?.id ?? selectedPatternId;
+      if (savedId) {
+        localStorage.setItem(`lincoln_last_pattern_${state.facility.id}`, savedId);
+        setSelectedPatternId(savedId);
+      }
     } catch {
       // Error handling — could add toast here
     } finally {

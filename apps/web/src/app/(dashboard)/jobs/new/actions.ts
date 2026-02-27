@@ -93,16 +93,22 @@ export async function saveCalendarPattern(input: {
       .eq("id", input.id)
       .eq("user_id", user.id);
     if (error) throw new Error(error.message);
+    return { id: input.id };
   } else {
     // Insert new
-    const { error } = await supabase.from("calendar_patterns").insert({
-      facility_id: input.facility_id,
-      user_id: user.id,
-      name: input.name,
-      is_default: input.is_default,
-      mappings: input.mappings,
-    });
+    const { data, error } = await supabase
+      .from("calendar_patterns")
+      .insert({
+        facility_id: input.facility_id,
+        user_id: user.id,
+        name: input.name,
+        is_default: input.is_default,
+        mappings: input.mappings,
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
+    return { id: data.id };
   }
 }
 
