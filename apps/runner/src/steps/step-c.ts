@@ -246,8 +246,40 @@ export async function run(
   // Load expected ranks from Supabase
   const { rankMap: expectedRankMap } = await loadExpectedRanks(jobId);
 
+  // Determine which room types to verify based on Process B plan selections.
+  // process_b_rows plan_name format: "--和室コンド--|カレンダーテスト"
+  // Extract room type group: strip "--" markers → "和室コンド"
+  // Then match against output xlsx planBlock.roomTypeGroup to find mapped room types.
+  const processBRows = (job.config_json as Record<string, unknown> | null)
+    ?.process_b_rows as { copy_source: string; plan_group_set: string; plan_name: string }[] | undefined;
+
+  let verifyRoomTypes: string[] | undefined;
+  if (processBRows && processBRows.length > 0) {
+    const targetGroups = new Set<string>();
+    for (const row of processBRows) {
+      if (!row.plan_name) continue;
+      const roomTypePart = row.plan_name.split("|")[0]; // "--和室コンド--"
+      const stripped = roomTypePart.replace(/^-+/, "").replace(/-+$/, ""); // "和室コンド"
+      if (stripped) targetGroups.add(stripped);
+    }
+
+    if (targetGroups.size > 0) {
+      // Match output xlsx plan blocks by roomTypeGroup → collect their mappedRoomTypes
+      verifyRoomTypes = [
+        ...new Set(
+          parsed.planBlocks
+            .filter((block) => targetGroups.has(block.roomTypeGroup))
+            .map((block) => block.mappedRoomType),
+        ),
+      ];
+      console.log(
+        `[STEPC] Verification scoped to Process B targets: ${[...targetGroups].join(", ")} → ${verifyRoomTypes.join(", ")}`,
+      );
+    }
+  }
+
   // Run verification
-  const result = verifyRanks(expectedRankMap, parsed);
+  const result = verifyRanks(expectedRankMap, parsed, verifyRoomTypes);
 
   // Log and save the result
   console.log(`\n${result.summary}`);

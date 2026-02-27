@@ -331,19 +331,33 @@ export function parseOutputXlsx(
  *
  * @param expectedRankMap - Expected ranks from Supabase (date→roomType→rankCode)
  * @param actual - Parsed output xlsx data
+ * @param mappedRoomTypes - If provided, only verify these room types (from calendar_mappings)
  * @returns Verification result with match/mismatch details
  */
 export function verifyRanks(
   expectedRankMap: RankMap,
   actual: ParsedOutputXlsx,
+  mappedRoomTypes?: string[],
 ): VerificationResult {
+  // Build a Set for fast lookup if mappedRoomTypes is provided
+  const roomTypeFilter = mappedRoomTypes
+    ? new Set(mappedRoomTypes)
+    : null;
+
   const mismatches: MismatchDetail[] = [];
   let matchCount = 0;
   let missingInExpected = 0;
   let missingInActual = 0;
+  let skippedUnmapped = 0;
 
   // Check each actual entry against expected
   for (const entry of actual.entries) {
+    // Skip room types not in calendar mappings
+    if (roomTypeFilter && !roomTypeFilter.has(entry.roomType)) {
+      skippedUnmapped++;
+      continue;
+    }
+
     const dateMap = expectedRankMap.get(entry.date);
     if (!dateMap) {
       missingInExpected++;
@@ -374,6 +388,10 @@ export function verifyRanks(
       continue; // Outside output period
     }
     for (const [roomType] of roomMap) {
+      // Skip room types not in calendar mappings
+      if (roomTypeFilter && !roomTypeFilter.has(roomType)) {
+        continue;
+      }
       const found = actual.entries.some(
         (e) => e.date === date && e.roomType === roomType,
       );
@@ -381,6 +399,10 @@ export function verifyRanks(
         missingInActual++;
       }
     }
+  }
+
+  if (skippedUnmapped > 0) {
+    console.log(`[STEPC] Skipped ${skippedUnmapped} entries for unmapped room types`);
   }
 
   const totalChecked = matchCount + mismatches.length;

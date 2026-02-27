@@ -1,11 +1,11 @@
 /**
  * STEP0 — Calendar rank injection (DOM update).
  *
- * Navigates to the テストカレンダー on the 6800 screen, then updates
- * each calendar cell with the expected rank from job_expected_ranks.
+ * Reads calendar_mappings from job config_json, then for each mapped
+ * Lincoln calendar on the 6800 screen, updates cells with expected ranks
+ * from the corresponding Excel room types.
  *
  * The 6800 calendar is day-level (one rank per date), not room-type-level.
- * We pick the first room type's rank for each date.
  *
  * Reference: docs/requirements.md §3.3, docs/design.md §3.6
  */
@@ -16,66 +16,142 @@ import { getSelector } from "../selectors.js";
 import {
   loadExpectedRanks,
   rankMapToDateRank,
+  rankMapToDateRankForRoomTypes,
   collectRankStyles,
   updateCalendarCells,
+  type RankMap,
   type DomSelectors,
 } from "./step0-helpers.js";
-
-/** Target calendar name — always use test calendar for safety */
-const TARGET_CALENDAR_NAME = "テストカレンダー";
 
 /** Lincoln base URL */
 const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
 
+interface CalendarMapping {
+  excel_calendar: string;
+  lincoln_calendar_id: string;
+}
+
+/** Group mappings by lincoln_calendar_id → list of excel room types */
+function groupMappingsByCalendar(
+  mappings: CalendarMapping[],
+): Map<string, string[]> {
+  const grouped = new Map<string, string[]>();
+  for (const m of mappings) {
+    if (!m.lincoln_calendar_id) continue; // skip unmapped
+    const existing = grouped.get(m.lincoln_calendar_id) ?? [];
+    existing.push(m.excel_calendar);
+    grouped.set(m.lincoln_calendar_id, existing);
+  }
+  return grouped;
+}
+
 export async function run(
   jobId: string,
   page: Page,
-  _job: Job,
+  job: Job,
 ): Promise<void> {
   console.log("[STEP0] Calendar rank injection — start");
 
-  // 1. Load expected ranks from Supabase
+  // 1. Read calendar_mappings from job config
+  const mappings =
+    (job.config_json?.calendar_mappings as CalendarMapping[] | undefined) ?? [];
+  const calendarGroups = groupMappingsByCalendar(mappings);
+
+  if (calendarGroups.size === 0) {
+    throw new Error(
+      "[STEP0] No calendar mappings configured. Set mappings in Step 1 of the wizard.",
+    );
+  }
+
+  console.log(
+    `[STEP0] Calendar mappings: ${calendarGroups.size} calendar(s) to update`,
+  );
+  for (const [calName, roomTypes] of calendarGroups) {
+    console.log(`[STEP0]   ${calName} ← ${roomTypes.join(", ")}`);
+  }
+
+  // 2. Load expected ranks from Supabase
   const { rankMap, maxDate } = await loadExpectedRanks(jobId);
-  const dateRanks = rankMapToDateRank(rankMap);
   console.log(
     `[STEP0] Rank data: ${rankMap.size} dates, max date: ${maxDate}`,
   );
 
-  // 2. Navigate to 6800 calendar list
+  // 3. Process each calendar
+  let totalUpdated = 0;
+  let calendarIndex = 0;
+
+  for (const [calendarName, roomTypes] of calendarGroups) {
+    calendarIndex++;
+    console.log(
+      `[STEP0] === Calendar ${calendarIndex}/${calendarGroups.size}: ${calendarName} ===`,
+    );
+
+    // Build date→rank for this calendar's room types
+    const dateRanks = rankMapToDateRankForRoomTypes(rankMap, roomTypes);
+    const dateCount = Object.keys(dateRanks).length;
+    console.log(`[STEP0] ${dateCount} dates with rank data for: ${roomTypes.join(", ")}`);
+
+    if (dateCount === 0) {
+      console.warn(`[STEP0] No rank data for ${calendarName} — skipping`);
+      continue;
+    }
+
+    const updated = await processOneCalendar(
+      page,
+      calendarName,
+      dateRanks,
+      maxDate,
+    );
+    totalUpdated += updated;
+  }
+
+  console.log(
+    `[STEP0] Calendar rank injection complete — ${totalUpdated} total cells updated across ${calendarGroups.size} calendar(s)`,
+  );
+}
+
+/** Process a single Lincoln calendar: navigate, update cells, save */
+async function processOneCalendar(
+  page: Page,
+  calendarName: string,
+  dateRanks: Record<string, string>,
+  maxDate: string,
+): Promise<number> {
+  // Navigate to 6800 calendar list
   const calendarSettingsUrl =
     LINCOLN_BASE + getSelector("navigation.calendarSettings");
-  console.log(`[STEP0] Navigating to calendar list: ${calendarSettingsUrl}`);
+  console.log(`[STEP0] Navigating to calendar list`);
   await page.goto(calendarSettingsUrl, {
     waitUntil: "networkidle",
     timeout: 30000,
   });
 
-  // 3. Find テストカレンダー in the list and click into detail
+  // Find calendar in the list and click into detail
   const listItemSelector = getSelector("step0.calendarListItem");
 
-  console.log(`[STEP0] Looking for: ${TARGET_CALENDAR_NAME}`);
+  console.log(`[STEP0] Looking for: ${calendarName}`);
   const calendarLink = page
     .locator(listItemSelector)
-    .filter({ hasText: TARGET_CALENDAR_NAME })
+    .filter({ hasText: calendarName })
     .first();
 
   if (!(await calendarLink.isVisible({ timeout: 10000 }).catch(() => false))) {
     throw new Error(
-      `[STEP0] Calendar "${TARGET_CALENDAR_NAME}" not found in list`,
+      `[STEP0] Calendar "${calendarName}" not found in list`,
     );
   }
 
-  console.log(`[STEP0] Found "${TARGET_CALENDAR_NAME}" — clicking...`);
+  console.log(`[STEP0] Found "${calendarName}" — clicking...`);
   await Promise.all([
     page.waitForLoadState("networkidle", { timeout: 15000 }),
     calendarLink.click(),
   ]);
   console.log("[STEP0] Entered calendar detail page");
 
-  // 4. Set period end date from max(date) in expected ranks
+  // Set period end date
   await setPeriodEndDate(page, maxDate);
 
-  // 5. Collect rank styles from the rank palette buttons
+  // Collect rank styles from the rank palette buttons
   const rankPaletteBtnSelector = getSelector("step0.rankPaletteBtn");
   const styleMap = await page.evaluate(
     collectRankStyles,
@@ -90,7 +166,7 @@ export async function run(
     );
   }
 
-  // 6. Build selector config for DOM update
+  // Build selector config for DOM update
   const domSelectors: DomSelectors = {
     rankAnchor: getSelector("step0.rankAnchor"),
     rankText: getSelector("step0.rankText"),
@@ -100,7 +176,7 @@ export async function run(
     inputRankStyleText: getSelector("step0.inputRankStyleText"),
   };
 
-  // 7. Update calendar cells in the DOM
+  // Update calendar cells in the DOM
   const result = await page.evaluate(updateCalendarCells, {
     dateRanks,
     styleMap,
@@ -119,13 +195,11 @@ export async function run(
 
   if (result.updated === 0) {
     throw new Error(
-      "[STEP0] No cells were updated. Check date range or rank data.",
+      `[STEP0] No cells were updated for "${calendarName}". Check date range or rank data.`,
     );
   }
 
-  // 8. Save — click doUpdate()
-  // doUpdate() may trigger window.confirm(); Playwright dismisses by default,
-  // so we must explicitly accept it for the save to proceed.
+  // Save — click doUpdate()
   const dialogMessages: string[] = [];
   const dialogHandler = async (dialog: import("playwright").Dialog) => {
     console.log(`[STEP0] Dialog: "${dialog.message()}" — accepting`);
@@ -147,7 +221,7 @@ export async function run(
     console.log(`[STEP0] Accepted ${dialogMessages.length} dialog(s)`);
   }
 
-  // 9. Verify save result — check for error messages
+  // Verify save result
   await page.waitForTimeout(1000);
   const errorMessage = await page.evaluate(() => {
     const errEl = document.querySelector(".c_txt-worning, .c_txt-error");
@@ -155,12 +229,14 @@ export async function run(
   });
 
   if (errorMessage) {
-    throw new Error(`[STEP0] Save failed: ${errorMessage}`);
+    throw new Error(`[STEP0] Save failed for "${calendarName}": ${errorMessage}`);
   }
 
   console.log(
-    `[STEP0] Calendar rank injection complete — ${result.updated} cells updated`,
+    `[STEP0] "${calendarName}" — ${result.updated} cells updated ✓`,
   );
+
+  return result.updated;
 }
 
 /**
