@@ -135,6 +135,10 @@ export async function run(
     setToCopySources.set(r.plan_group_set, existing);
   }
 
+  // Track retries per month (for MBLK0012 — server busy processing previous send)
+  const monthRetryCount = new Map<string, number>();
+  const MAX_MONTH_RETRIES = 3;
+
   // 5. Loop: for each month → for each mapping row → select set → copy → send
   for (let mi = 0; mi < months.length; mi++) {
     const month = months[mi];
@@ -414,34 +418,54 @@ export async function run(
     const sendButton = page.locator(sendBtn);
     await sendButton.waitFor({ state: "visible", timeout: 5000 });
 
-    // doSend triggers: confirm dialog → form POST → page navigation
-    // Use waitForNavigation pattern to handle the full navigation cycle
-    await sendButton.click();
-    // Wait for the confirm dialog to be handled and navigation to complete
-    await page.waitForLoadState("load", { timeout: 60000 });
-    await page.waitForLoadState("networkidle", { timeout: 30000 }).catch(() => {});
-    // Extra wait: Lincoln may execute JS after load that triggers secondary navigation
-    await page.waitForTimeout(3000);
-    // Final stability check — ensure no more navigations are pending
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    // Original pattern: click + waitForNetworkIdle concurrently
+    // doSend triggers: confirm → form POST → alert → popup → page settles
+    await Promise.all([
+      page.waitForLoadState("networkidle", { timeout: 60000 }),
+      sendButton.click(),
+    ]);
+    // Wait for popup/alert cycle to complete (longer for production data volumes)
+    await page.waitForTimeout(5000);
 
-    // Check for errors after send (with retry for transient context issues)
+    // Check for errors after send (with retry if context was destroyed by popup)
     let sendError: string | null = null;
     try {
       sendError = await checkPageError(page);
     } catch (evalErr) {
-      // Context may still be transitioning — wait and retry once
+      // Execution context destroyed by late popup/navigation — wait and retry
       console.log(`[STEPB] Post-send eval failed, retrying: ${evalErr instanceof Error ? evalErr.message : evalErr}`);
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(5000);
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       sendError = await checkPageError(page);
     }
+
     if (sendError) {
       console.log(`[STEPB] Post-send message: ${sendError}`);
       // MASC0155 = "変更内容がありません" — ranks already match, not an error
       if (sendError.includes("MASC0155")) {
         console.log(`[STEPB] MASC0155: No changes for ${monthLabel} — ranks already up to date`);
-      } else if (sendError.match(/MSF[WE]\d{4}|MASC\d{4}/)) {
+      }
+      // MBLK0012 = "選択された日が別の操作により更新処理中" — server still processing
+      else if (sendError.includes("MBLK0012")) {
+        const retries = monthRetryCount.get(month) ?? 0;
+        if (retries < MAX_MONTH_RETRIES) {
+          monthRetryCount.set(month, retries + 1);
+          console.log(
+            `[STEPB] MBLK0012: Server busy — waiting 15s then retrying ` +
+            `${monthLabel} (retry ${retries + 1}/${MAX_MONTH_RETRIES})`,
+          );
+          await page.waitForTimeout(15000);
+          // Re-navigate to 5050 to get a clean page state
+          await page.goto(url5050, { waitUntil: "networkidle", timeout: 30000 });
+          mi--; // Retry this month from the top of the loop
+          continue;
+        }
+        throw new Error(
+          `[STEPB] Send failed for ${monthLabel} after ${MAX_MONTH_RETRIES} retries: ${sendError}`,
+        );
+      }
+      // Other Lincoln errors — fail
+      else if (sendError.match(/MSF[WE]\d{4}|MASC\d{4}|MBLK\d{4}/)) {
         throw new Error(
           `[STEPB] Send failed for ${monthLabel}: ${sendError}`,
         );
@@ -449,6 +473,13 @@ export async function run(
     }
 
     console.log(`[STEPB] ✓ ${monthLabel} — done`);
+
+    // Inter-month delay: let the server finish processing before next month
+    // Prevents MBLK0012 ("別の操作により更新処理中") on the next send
+    if (!isLastMonth) {
+      console.log(`[STEPB] Waiting 5s for server processing before next month...`);
+      await page.waitForTimeout(5000);
+    }
   }
 
   page.off("dialog", dialogHandler);
