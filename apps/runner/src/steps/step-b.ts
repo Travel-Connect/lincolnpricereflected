@@ -41,6 +41,22 @@ async function checkPageError(page: Page): Promise<string | null> {
   });
 }
 
+/** Collect page diagnostic info for failure logging */
+async function dumpPageState(page: Page, label: string): Promise<void> {
+  try {
+    const url = page.url();
+    const title = await page.title().catch(() => "(title unavailable)");
+    console.log(`[STEPB] [${label}] URL: ${url}`);
+    console.log(`[STEPB] [${label}] Title: ${title}`);
+    const errorText = await checkPageError(page).catch(() => null);
+    if (errorText) {
+      console.log(`[STEPB] [${label}] Page error: ${errorText}`);
+    }
+  } catch (e) {
+    console.log(`[STEPB] [${label}] Could not dump page state: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 export async function run(
   jobId: string,
   page: Page,
@@ -90,10 +106,14 @@ export async function run(
   // 3. Set up dialog handler — distinguish alert (error) vs confirm (submission)
   let lastDialogType: "alert" | "confirm" | null = null;
   let lastDialogMessage = "";
+  const dialogLog: string[] = []; // Full dialog history for diagnostics
   const dialogHandler = async (dialog: import("playwright").Dialog) => {
     lastDialogType = dialog.type() as "alert" | "confirm";
     lastDialogMessage = dialog.message();
-    console.log(`[STEPB] Dialog [${lastDialogType}]: "${lastDialogMessage}" — accepting`);
+    const ts = new Date().toISOString().slice(11, 23);
+    const entry = `[${ts}] ${lastDialogType}: "${lastDialogMessage}"`;
+    dialogLog.push(entry);
+    console.log(`[STEPB] Dialog ${entry} — accepting`);
     try {
       await dialog.accept();
     } catch {
@@ -411,21 +431,35 @@ export async function run(
     const sendLabel = isLastMonth ? "送信して閉じる" : "送信して続ける";
     console.log(`[STEPB] Clicking ${sendLabel}...`);
 
-    // Reset dialog tracker
+    // Reset dialog tracker; keep dialogLog for cumulative history
     lastDialogType = null;
     lastDialogMessage = "";
+    const dialogCountBefore = dialogLog.length;
 
     const sendButton = page.locator(sendBtn);
     await sendButton.waitFor({ state: "visible", timeout: 5000 });
 
     // Original pattern: click + waitForNetworkIdle concurrently
     // doSend triggers: confirm → form POST → alert → popup → page settles
+    const sendStartTime = Date.now();
     await Promise.all([
       page.waitForLoadState("networkidle", { timeout: 60000 }),
       sendButton.click(),
     ]);
+    const networkIdleTime = Date.now();
+    console.log(`[STEPB] networkidle reached in ${networkIdleTime - sendStartTime}ms`);
+
     // Wait for popup/alert cycle to complete (longer for production data volumes)
     await page.waitForTimeout(5000);
+
+    // Log dialogs received during this send
+    const newDialogs = dialogLog.slice(dialogCountBefore);
+    if (newDialogs.length > 0) {
+      console.log(`[STEPB] Dialogs during send (${newDialogs.length}):`);
+      for (const d of newDialogs) console.log(`[STEPB]   ${d}`);
+    } else {
+      console.log(`[STEPB] No dialogs received during send — confirm may not have fired`);
+    }
 
     // Check for errors after send (with retry if context was destroyed by popup)
     let sendError: string | null = null;
@@ -433,11 +467,26 @@ export async function run(
       sendError = await checkPageError(page);
     } catch (evalErr) {
       // Execution context destroyed by late popup/navigation — wait and retry
-      console.log(`[STEPB] Post-send eval failed, retrying: ${evalErr instanceof Error ? evalErr.message : evalErr}`);
+      const errMsg = evalErr instanceof Error ? evalErr.message : String(evalErr);
+      console.log(`[STEPB] Post-send eval failed: ${errMsg}`);
+      await dumpPageState(page, "context-destroyed");
+      console.log(`[STEPB] Waiting 5s then retrying checkPageError...`);
       await page.waitForTimeout(5000);
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
-      sendError = await checkPageError(page);
+      try {
+        sendError = await checkPageError(page);
+      } catch (retryErr) {
+        const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr);
+        console.log(`[STEPB] Retry also failed: ${retryMsg}`);
+        await dumpPageState(page, "retry-failed");
+        throw new Error(
+          `[STEPB] Cannot evaluate page after send for ${monthLabel}: ${retryMsg}`,
+        );
+      }
     }
+
+    const totalSendTime = Date.now() - sendStartTime;
+    console.log(`[STEPB] Send cycle completed in ${totalSendTime}ms`);
 
     if (sendError) {
       console.log(`[STEPB] Post-send message: ${sendError}`);
@@ -460,12 +509,14 @@ export async function run(
           mi--; // Retry this month from the top of the loop
           continue;
         }
+        await dumpPageState(page, "MBLK0012-exhausted");
         throw new Error(
           `[STEPB] Send failed for ${monthLabel} after ${MAX_MONTH_RETRIES} retries: ${sendError}`,
         );
       }
       // Other Lincoln errors — fail
       else if (sendError.match(/MSF[WE]\d{4}|MASC\d{4}|MBLK\d{4}/)) {
+        await dumpPageState(page, "send-error");
         throw new Error(
           `[STEPB] Send failed for ${monthLabel}: ${sendError}`,
         );
@@ -488,4 +539,8 @@ export async function run(
   console.log(
     `\n[STEPB] Bulk price rank settings complete — ${months.length} month(s) processed`,
   );
+  console.log(`[STEPB] Total dialogs received: ${dialogLog.length}`);
+  if (monthRetryCount.size > 0) {
+    console.log(`[STEPB] Month retries: ${[...monthRetryCount.entries()].map(([m, c]) => `${m}(${c})`).join(", ")}`);
+  }
 }
