@@ -96,19 +96,25 @@ export function StepTwoScreen({ state, setState }: Props) {
       return;
     }
     let cancelled = false;
-    loadPatterns(state.facility.id)
+    const facilityId = state.facility.id;
+    loadPatterns(facilityId)
       .then(({ processBPatterns }) => {
-        if (!cancelled) {
-          setSavedPatterns(processBPatterns as ProcessBPattern[]);
-          const def = (processBPatterns as ProcessBPattern[]).find((p) => p.is_default);
-          if (def) {
-            setSelectedPatternId(def.id);
-            setPatternName(def.name);
-            setState((s) => ({ ...s, processBRows: def.rows }));
-          } else {
-            setSelectedPatternId("");
-            setPatternName("");
-          }
+        if (cancelled) return;
+        const patterns = processBPatterns as ProcessBPattern[];
+        setSavedPatterns(patterns);
+
+        // Auto-select: last used (localStorage) > is_default > none
+        const lastUsedId = localStorage.getItem(`lincoln_last_patternB_${facilityId}`);
+        const lastUsed = lastUsedId ? patterns.find((p) => p.id === lastUsedId) : null;
+        const target = lastUsed ?? patterns.find((p) => p.is_default) ?? null;
+
+        if (target) {
+          setSelectedPatternId(target.id);
+          setPatternName(target.name);
+          setState((s) => ({ ...s, processBRows: target.rows }));
+        } else {
+          setSelectedPatternId("");
+          setPatternName("");
         }
       })
       .catch(() => {
@@ -143,9 +149,13 @@ export function StepTwoScreen({ state, setState }: Props) {
       if (pattern) {
         setPatternName(pattern.name);
         setState((s) => ({ ...s, processBRows: pattern.rows }));
+        // Remember last used pattern per facility
+        if (state.facility) {
+          localStorage.setItem(`lincoln_last_patternB_${state.facility.id}`, patternId);
+        }
       }
     },
-    [savedPatterns, setState],
+    [savedPatterns, setState, state.facility],
   );
 
   /** Save current rows as a pattern */
@@ -158,7 +168,7 @@ export function StepTwoScreen({ state, setState }: Props) {
 
     setSavingPattern(true);
     try {
-      await saveProcessBPattern({
+      const saved = await saveProcessBPattern({
         facility_id: state.facility.id,
         name: patternName.trim(),
         is_default: false,
@@ -166,6 +176,12 @@ export function StepTwoScreen({ state, setState }: Props) {
         ...(isUpdate ? { id: selectedPatternId } : {}),
       });
       await refreshPatterns();
+      // Remember as last used pattern
+      const savedId = saved?.id ?? selectedPatternId;
+      if (savedId) {
+        localStorage.setItem(`lincoln_last_patternB_${state.facility.id}`, savedId);
+        setSelectedPatternId(savedId);
+      }
     } catch {
       // Error handling
     } finally {

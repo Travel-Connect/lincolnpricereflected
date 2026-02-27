@@ -136,15 +136,21 @@ export async function saveProcessBPattern(input: {
       .eq("id", input.id)
       .eq("user_id", user.id);
     if (error) throw new Error(error.message);
+    return { id: input.id };
   } else {
-    const { error } = await supabase.from("process_b_patterns").insert({
-      facility_id: input.facility_id,
-      user_id: user.id,
-      name: input.name,
-      is_default: input.is_default,
-      rows: input.rows,
-    });
+    const { data, error } = await supabase
+      .from("process_b_patterns")
+      .insert({
+        facility_id: input.facility_id,
+        user_id: user.id,
+        name: input.name,
+        is_default: input.is_default,
+        rows: input.rows,
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
+    return { id: data.id };
   }
 }
 
