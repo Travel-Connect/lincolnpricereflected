@@ -187,14 +187,15 @@ export async function recordStepFailure(
  * Uses optimistic locking: only claims if status is still PENDING.
  */
 export async function claimNextJob(targetMachine?: string): Promise<Job | null> {
-  // Find oldest pending job (filtered by machine if specified)
+  // Find oldest pending job targeted to this machine or any machine
+  const machineName = targetMachine ?? process.env.COMPUTERNAME ?? "";
   let query = getSupabase()
     .from("jobs")
     .select("id")
     .eq("status", "PENDING");
 
-  if (targetMachine) {
-    query = query.eq("target_machine", targetMachine);
+  if (machineName) {
+    query = query.or(`target_machine.eq.${machineName},target_machine.is.null`);
   }
 
   const { data: pending } = await query
@@ -291,13 +292,15 @@ export interface CalendarSyncRequest {
 /** Claim the next PENDING calendar sync request for this machine */
 export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null> {
   const machineName = process.env.COMPUTERNAME ?? "";
+
+  // Match requests targeted to this machine OR any machine (target_machine is null)
   let query = getSupabase()
     .from("calendar_sync_requests")
     .select("id, facility_id, status")
     .eq("status", "PENDING");
 
   if (machineName) {
-    query = query.eq("target_machine", machineName);
+    query = query.or(`target_machine.eq.${machineName},target_machine.is.null`);
   }
 
   const { data: pending } = await query
