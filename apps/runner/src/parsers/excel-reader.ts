@@ -58,10 +58,13 @@ export async function parseExcel(
     args.push("--sheet", sheetName);
   }
 
+  console.log(`[excel-reader] python ${PARSER_SCRIPT} "${filePath}"`);
+
   try {
     const { stdout, stderr } = await execFileAsync("python", args, {
       encoding: "utf-8",
       maxBuffer: 50 * 1024 * 1024, // 50MB for large files
+      shell: true, // use shell on Windows for reliable PATH resolution
     });
 
     if (stderr && stderr.trim()) {
@@ -77,24 +80,24 @@ export async function parseExcel(
 
     return JSON.parse(stdout) as ParseResult;
   } catch (err) {
-    if (err instanceof Error && "code" in err) {
-      const execErr = err as Error & { code: string; stderr?: string };
-      if (execErr.code === "ENOENT") {
-        throw new Error(
-          "Python not found. Install Python 3.12+ and openpyxl.",
-        );
-      }
-      if (execErr.stderr) {
-        // Try to parse structured error from stderr
-        try {
-          const parsed = JSON.parse(execErr.stderr.trim()) as ParseError;
-          throw new Error(`${parsed.type}: ${parsed.error}`);
-        } catch (parseErr) {
-          if (parseErr instanceof SyntaxError) {
-            throw new Error(`Excel parser failed: ${execErr.stderr.trim()}`);
-          }
-          throw parseErr;
+    const execErr = err as Error & { code?: string | number; stderr?: string; stdout?: string };
+    // Always log the full error details for debugging
+    console.error(`[excel-reader] Python exec failed — code: ${execErr.code}, stderr: ${execErr.stderr || "(empty)"}`);
+    if (execErr.code === "ENOENT") {
+      throw new Error(
+        "Python not found. Install Python 3.12+ and openpyxl.",
+      );
+    }
+    if (execErr.stderr?.trim()) {
+      // Try to parse structured error from stderr
+      try {
+        const parsed = JSON.parse(execErr.stderr.trim()) as ParseError;
+        throw new Error(`${parsed.type}: ${parsed.error}`);
+      } catch (parseErr) {
+        if (parseErr instanceof SyntaxError) {
+          throw new Error(`Excel parser failed: ${execErr.stderr.trim()}`);
         }
+        throw parseErr;
       }
     }
     throw err;
