@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useApp } from "@/lib/context/app-context";
 import { toast } from "sonner";
@@ -41,12 +41,28 @@ const INITIAL_STATE: WizardState = {
   targetMachine: "",
 };
 
+const USER_DEFAULT_MACHINE: Record<string, string> = {
+  "tc.kamizato@gmail.com": "KAMIZATO-MAIN",
+  "s-funakoshi@travel-connect.jp": "FUNAKOSHI-DESK",
+  "r-tamashiro@travel-connect.jp": "TAMASHIRO",
+};
+
 export default function NewJobPage() {
   const router = useRouter();
-  const { environment } = useApp();
+  const { environment, user, runners } = useApp();
   const [screen, setScreen] = useState(0);
   const [state, setState] = useState<WizardState>(INITIAL_STATE);
   const [submitting, setSubmitting] = useState(false);
+
+  // Auto-select default Runner PC based on logged-in user
+  useEffect(() => {
+    if (state.targetMachine) return;
+    const email = user.email ?? "";
+    const defaultMachine = USER_DEFAULT_MACHINE[email];
+    if (defaultMachine && runners.some((r) => r.machine_name === defaultMachine)) {
+      setState((s) => ({ ...s, targetMachine: defaultMachine }));
+    }
+  }, [user.email, runners, state.targetMachine]);
 
   const screens = getScreens(state.execMode);
   const currentScreenLabel = screens[screen];
@@ -73,7 +89,11 @@ export default function NewJobPage() {
   }
 
   async function handleExecute() {
-    if (!state.facility || !state.file || !state.targetMachine) return;
+    if (!state.targetMachine) {
+      toast.error("Runner PC を選択してください");
+      return;
+    }
+    if (!state.facility || !state.file) return;
     setSubmitting(true);
 
     try {
