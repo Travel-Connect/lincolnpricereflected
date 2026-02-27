@@ -1,9 +1,10 @@
 /**
  * Lincoln Runner — CLI entry point.
  *
- * Two modes:
+ * Three modes:
  *   npx tsx src/main.ts --job-id <uuid>   — run a single job
  *   npx tsx src/main.ts --poll             — poll for PENDING jobs continuously
+ *   npx tsx src/main.ts --sync             — process one sync request and exit
  *
  * Auth flow: login → 2FA (if needed) → session save → steps
  * Session persistence: reuses saved cookies to skip 2FA on subsequent runs.
@@ -52,7 +53,7 @@ const POLL_INTERVAL_MS = 5000;
 
 /** Parse CLI args */
 interface CliArgs {
-  mode: "single" | "poll";
+  mode: "single" | "poll" | "sync";
   jobId?: string;
   keepBrowser: boolean;
 }
@@ -65,10 +66,15 @@ function parseArgs(): CliArgs {
     return { mode: "poll", keepBrowser };
   }
 
+  if (args.includes("--sync")) {
+    return { mode: "sync", keepBrowser };
+  }
+
   const idx = args.indexOf("--job-id");
   if (idx === -1 || idx + 1 >= args.length) {
     console.error("Usage: npx tsx src/main.ts --job-id <uuid> [--keep-browser]");
     console.error("       npx tsx src/main.ts --poll [--keep-browser]");
+    console.error("       npx tsx src/main.ts --sync");
     process.exit(1);
   }
   return { mode: "single", jobId: args[idx + 1], keepBrowser };
@@ -420,6 +426,11 @@ async function main(): Promise<void> {
 
   if (args.mode === "poll") {
     await pollLoop(args.keepBrowser);
+  } else if (args.mode === "sync") {
+    const didSync = await processNextSyncRequest();
+    if (!didSync) {
+      console.log("[runner] No pending sync requests");
+    }
   } else {
     const job = await getJob(args.jobId!);
     await updateJobStatus(args.jobId!, "RUNNING");
