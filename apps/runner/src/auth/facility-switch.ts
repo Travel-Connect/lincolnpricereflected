@@ -11,8 +11,7 @@
 import type { Page } from "playwright";
 import { getSelector } from "../selectors.js";
 import { FacilityMismatchError } from "../errors.js";
-
-const MAX_SWITCH_ATTEMPTS = 3;
+import { MAX_SWITCH_ATTEMPTS } from "../constants.js";
 
 /**
  * Switch to a different facility.

@@ -16,18 +16,12 @@
 
 import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
+import { getJobConfig } from "../job-state.js";
 import { getSelector } from "../selectors.js";
 import { getFacilityLincolnId } from "../facility-lookup.js";
 import { FacilityMismatchError } from "../errors.js";
 import { loadMonthRange } from "./step0-helpers.js";
-
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
-interface ProcessBRow {
-  copy_source: string;
-  plan_group_set: string;
-  plan_name: string;
-}
+import { LINCOLN_BASE } from "../constants.js";
 
 /**
  * Check for error messages on the 5050 page.
@@ -55,7 +49,8 @@ export async function run(
   console.log("[STEPB] Bulk price rank settings — start");
 
   // --- Read process_b_rows from job config ---
-  const configRows = (job.config_json?.process_b_rows ?? []) as ProcessBRow[];
+  const config = getJobConfig(job);
+  const configRows = config.process_b_rows ?? [];
   const rows = configRows.filter((r) => r.copy_source && r.plan_group_set);
   if (rows.length === 0) {
     throw new Error("[STEPB] No process_b_rows configured in job config");

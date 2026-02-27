@@ -31,6 +31,7 @@ import {
   writeJobLog,
   getUserCredentials,
   downloadFromStorage,
+  getJobConfig,
   type Job,
   type StepName,
   type UserCredentials,
@@ -48,6 +49,7 @@ import {
   clearSession,
 } from "./auth/index.js";
 import { processNextSyncRequest } from "./sync-calendar.js";
+import { LINCOLN_BASE } from "./constants.js";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -252,6 +254,17 @@ async function executeJob(
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[runner] ✗ Job failed: ${message}`);
     await updateJobStatus(jobId, "FAILED");
+
+    // Save network log for debugging failed jobs
+    try {
+      const artifactDir = resolve(PROJECT_ROOT, "data", "artifacts", `job-${jobId}`);
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(artifactDir, { recursive: true });
+      const logPath = recorder.save(artifactDir, "failure");
+      console.log(`[runner] Network log saved: ${logPath} (${recorder.size} entries)`);
+    } catch (saveErr) {
+      console.error(`[runner] Failed to save network log: ${saveErr instanceof Error ? saveErr.message : saveErr}`);
+    }
   } finally {
     recorder.detach(page);
     if (keepBrowserOpen) {
@@ -286,7 +299,9 @@ async function performAuth(
         "https://www.tl-lincoln.net/accomodation/Ascsc1010InitAction.do",
         { waitUntil: "networkidle", timeout: 15000 },
       )
-      .catch(() => {});
+      .catch((err) => {
+        console.log(`[runner] Session restore navigation failed: ${err instanceof Error ? err.message : err}`);
+      });
 
     const title = await page.title();
     if (title.includes("トップページ") || title.includes("メニュー")) {
@@ -335,8 +350,6 @@ async function performAuth(
   return true; // fresh login performed
 }
 
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
 /**
  * Navigate to the 5010 price management page for visual verification.
  * Selects the plan group set configured in the job if available.
@@ -352,8 +365,8 @@ async function navigateToVerificationPage(
     console.log(`[runner] On page: ${await page.title()}`);
 
     // Try to select the configured plan group set
-    const planGroupSetNames =
-      (job as any).config_json?.plan_group_set_names as string[] | undefined;
+    const config = getJobConfig(job);
+    const planGroupSetNames = config.plan_group_set_names;
     const targetName = planGroupSetNames?.[0];
 
     if (targetName) {

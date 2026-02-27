@@ -62,7 +62,8 @@ export function StepOneScreen({ state, setState }: Props) {
       .then((cals) => {
         if (!cancelled) setLincolnCalendars(cals);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-one] Failed to fetch facility calendars:", err);
         if (!cancelled) setLincolnCalendars([]);
       })
       .finally(() => {
@@ -107,7 +108,8 @@ export function StepOneScreen({ state, setState }: Props) {
           setPatternName("");
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-one] Failed to load patterns:", err);
         if (!cancelled) setSavedPatterns([]);
       });
     return () => { cancelled = true; };
@@ -166,8 +168,8 @@ export function StepOneScreen({ state, setState }: Props) {
         localStorage.setItem(`lincoln_last_pattern_${state.facility.id}`, savedId);
         setSelectedPatternId(savedId);
       }
-    } catch {
-      // Error handling — could add toast here
+    } catch (err) {
+      console.error("[step-one] Pattern save error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -182,8 +184,8 @@ export function StepOneScreen({ state, setState }: Props) {
       setSelectedPatternId("");
       setPatternName("");
       await refreshPatterns();
-    } catch {
-      // Error handling
+    } catch (err) {
+      console.error("[step-one] Pattern delete error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -219,8 +221,8 @@ export function StepOneScreen({ state, setState }: Props) {
             setSyncError(result.error_message || "同期に失敗しました");
           }
           // PENDING/RUNNING — keep polling
-        } catch {
-          // Ignore transient errors during polling
+        } catch (err) {
+          console.error("[step-one] Sync poll error (transient):", err);
         }
       }, 3000);
     } catch (err) {
@@ -257,7 +259,8 @@ export function StepOneScreen({ state, setState }: Props) {
             lincoln_calendar_id: "",
           })),
         }));
-      } catch {
+      } catch (err) {
+        console.error("[step-one] Excel parse error:", err);
         setState((s) => ({
           ...s,
           file,

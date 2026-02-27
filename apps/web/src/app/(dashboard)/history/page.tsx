@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { typedDataOrEmpty } from "@/lib/supabase/typed-query";
 import type { Job } from "@/lib/types/database";
 import { HistoryClient } from "./history-client";
 
@@ -11,5 +12,5 @@ export default async function HistoryPage() {
     .order("created_at", { ascending: false })
     .range(0, 49);
 
-  return <HistoryClient initialJobs={(jobs as unknown as Job[]) ?? []} />;
+  return <HistoryClient initialJobs={typedDataOrEmpty<Job>(jobs)} />;
 }

@@ -19,9 +19,8 @@ import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
 import { getFacilityInfo } from "../facility-lookup.js";
 import { getSelector } from "../selectors.js";
+import { TOP_PAGE_URL } from "../constants.js";
 
-const TOP_PAGE_URL =
-  "https://www.tl-lincoln.net/accomodation/Ascsc1010InitAction.do";
 const MAX_SWITCH_ATTEMPTS = 5;
 
 /**

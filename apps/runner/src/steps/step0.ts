@@ -12,6 +12,8 @@
 
 import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
+import { getJobConfig } from "../job-state.js";
+import type { CalendarMapping } from "../job-state.js";
 import { getSelector } from "../selectors.js";
 import {
   loadExpectedRanks,
@@ -22,14 +24,7 @@ import {
   type RankMap,
   type DomSelectors,
 } from "./step0-helpers.js";
-
-/** Lincoln base URL */
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
-interface CalendarMapping {
-  excel_calendar: string;
-  lincoln_calendar_id: string;
-}
+import { LINCOLN_BASE } from "../constants.js";
 
 /** Group mappings by lincoln_calendar_id → list of excel room types */
 function groupMappingsByCalendar(
@@ -53,8 +48,8 @@ export async function run(
   console.log("[STEP0] Calendar rank injection — start");
 
   // 1. Read calendar_mappings from job config
-  const mappings =
-    (job.config_json?.calendar_mappings as CalendarMapping[] | undefined) ?? [];
+  const config = getJobConfig(job);
+  const mappings = config.calendar_mappings ?? [];
   const calendarGroups = groupMappingsByCalendar(mappings);
 
   if (calendarGroups.size === 0) {

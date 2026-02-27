@@ -14,9 +14,12 @@
 
 import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
+import { getJobConfig } from "../job-state.js";
+import type { OutputPlan } from "../job-state.js";
 import { getSelector } from "../selectors.js";
 import { getFacilityLincolnId } from "../facility-lookup.js";
-import { FacilityMismatchError, VerificationFailedError } from "../errors.js";
+import { verifyFacilityId } from "../verify-facility.js";
+import { VerificationFailedError } from "../errors.js";
 import { saveScreenshot, saveText } from "../artifact-writer.js";
 import { loadExpectedRanks } from "./step0-helpers.js";
 import {
@@ -26,14 +29,7 @@ import {
 } from "./step-c-helpers.js";
 import { resolve } from "node:path";
 import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
-
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
-/** Plan to select for output */
-export interface OutputPlan {
-  value: string; // "roomTypeId,planId" e.g. "6,25"
-  label: string; // display name for logging
-}
+import { LINCOLN_BASE } from "../constants.js";
 
 /** Options for STEPC verification */
 export interface StepCOptions {
@@ -59,8 +55,8 @@ export async function run(
   console.log("[STEPC] Output & verification — start");
 
   // Resolve output plans: config_json > options > defaults
-  const configPlans = (job.config_json as Record<string, unknown> | null)
-    ?.output_plans as OutputPlan[] | undefined;
+  const config = getJobConfig(job);
+  const configPlans = config.output_plans;
   const plans = configPlans || options?.outputPlans || DEFAULT_OUTPUT_PLANS;
   console.log(`[STEPC] Plan source: ${configPlans ? "config_json" : options?.outputPlans ? "options" : "defaults"}`);
 
@@ -74,17 +70,7 @@ export async function run(
   console.log(`[STEPC] On page: ${await page.title()}`);
 
   // 2. Verify facility ID via header
-  const facilityIdSelector = getSelector("stepA.facilityIdText");
-  const actualId = (
-    await page.locator(facilityIdSelector).first().textContent()
-  )?.trim();
-  console.log(
-    `[STEPC] Facility ID check: expected="${expectedId}", actual="${actualId}"`,
-  );
-  if (actualId !== expectedId) {
-    throw new FacilityMismatchError(expectedId, actualId ?? "");
-  }
-  console.log("[STEPC] Facility ID verified OK");
+  await verifyFacilityId(page, expectedId, "STEPC");
 
   // 3. Set output period: end date = 2 months later, end of month
   const now = new Date();
@@ -250,8 +236,7 @@ export async function run(
   // process_b_rows plan_name format: "--和室コンド--|カレンダーテスト"
   // Extract room type group: strip "--" markers → "和室コンド"
   // Then match against output xlsx planBlock.roomTypeGroup to find mapped room types.
-  const processBRows = (job.config_json as Record<string, unknown> | null)
-    ?.process_b_rows as { copy_source: string; plan_group_set: string; plan_name: string }[] | undefined;
+  const processBRows = config.process_b_rows;
 
   let verifyRoomTypes: string[] | undefined;
   if (processBRows && processBRows.length > 0) {

@@ -75,7 +75,8 @@ export function StepTwoScreen({ state, setState }: Props) {
           setPlanNamesBySet(pns);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-two] Failed to fetch facility data:", err);
         if (!cancelled) {
           setLincolnCalendars([]);
           setPlanGroupNames([]);
@@ -117,7 +118,8 @@ export function StepTwoScreen({ state, setState }: Props) {
           setPatternName("");
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-two] Failed to load patterns:", err);
         if (!cancelled) setSavedPatterns([]);
       });
     return () => { cancelled = true; };
@@ -182,8 +184,8 @@ export function StepTwoScreen({ state, setState }: Props) {
         localStorage.setItem(`lincoln_last_patternB_${state.facility.id}`, savedId);
         setSelectedPatternId(savedId);
       }
-    } catch {
-      // Error handling
+    } catch (err) {
+      console.error("[step-two] Pattern save error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -198,8 +200,8 @@ export function StepTwoScreen({ state, setState }: Props) {
       setSelectedPatternId("");
       setPatternName("");
       await refreshPatterns();
-    } catch {
-      // Error handling
+    } catch (err) {
+      console.error("[step-two] Pattern delete error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -238,8 +240,8 @@ export function StepTwoScreen({ state, setState }: Props) {
             setSyncStatus("error");
             setSyncError(result.error_message || "同期に失敗しました");
           }
-        } catch {
-          // Ignore transient errors during polling
+        } catch (err) {
+          console.error("[step-two] Sync poll error (transient):", err);
         }
       }, 3000);
     } catch (err) {

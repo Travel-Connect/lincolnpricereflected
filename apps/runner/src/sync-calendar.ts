@@ -28,10 +28,7 @@ import {
   saveSession,
   clearSession,
 } from "./auth/index.js";
-
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-const TOP_PAGE_URL = LINCOLN_BASE + "Ascsc1010InitAction.do";
-const MAX_SWITCH_ATTEMPTS = 3;
+import { LINCOLN_BASE, TOP_PAGE_URL, MAX_SWITCH_ATTEMPTS } from "./constants.js";
 
 /** Check for and process one pending calendar sync request. Returns true if one was processed. */
 export async function processNextSyncRequest(): Promise<boolean> {
@@ -115,7 +112,9 @@ async function performSyncAuth(
     console.log("[sync] Attempting session restore...");
     await page
       .goto(TOP_PAGE_URL, { waitUntil: "networkidle", timeout: 15000 })
-      .catch(() => {});
+      .catch((err) => {
+        console.log(`[sync] Session restore navigation failed: ${err instanceof Error ? err.message : err}`);
+      });
 
     const title = await page.title();
     if (title.includes("トップページ") || title.includes("メニュー")) {

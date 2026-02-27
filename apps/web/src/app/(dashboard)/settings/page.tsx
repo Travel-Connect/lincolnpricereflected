@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { typedData, typedDataOrEmpty } from "@/lib/supabase/typed-query";
 import type {
   Facility,
   UserLincolnCredentials,
@@ -26,10 +27,8 @@ export default async function SettingsPage() {
 
   return (
     <SettingsClient
-      facilities={(facilitiesRes.data as unknown as Facility[]) ?? []}
-      credentials={
-        (credentialsRes.data as unknown as UserLincolnCredentials) ?? null
-      }
+      facilities={typedDataOrEmpty<Facility>(facilitiesRes.data)}
+      credentials={typedData<UserLincolnCredentials | null>(credentialsRes.data ?? null)}
       userEmail={user!.email ?? ""}
     />
   );

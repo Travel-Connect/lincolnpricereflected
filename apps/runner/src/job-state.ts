@@ -19,6 +19,33 @@ export type JobStatus =
 
 export type ExecMode = "A_only" | "B_only" | "A_and_B";
 
+/** Calendar mapping from Excel room type to Lincoln calendar */
+export interface CalendarMapping {
+  excel_calendar: string;
+  lincoln_calendar_id: string;
+}
+
+/** Process B mapping row */
+export interface ProcessBRow {
+  copy_source: string;
+  plan_group_set: string;
+  plan_name: string;
+}
+
+/** Output plan for STEPC */
+export interface OutputPlan {
+  value: string;
+  label: string;
+}
+
+/** Typed job config — contents of config_json JSONB column */
+export interface JobConfig {
+  calendar_mappings?: CalendarMapping[];
+  process_b_rows?: ProcessBRow[];
+  output_plans?: OutputPlan[];
+  plan_group_set_names?: string[];
+}
+
 export interface Job {
   id: string;
   facility_id: string;
@@ -34,6 +61,11 @@ export interface Job {
   target_period_to: string | null;
   config_json: Record<string, unknown> | null;
   retry_count: number;
+}
+
+/** Type-safe accessor for job config */
+export function getJobConfig(job: Job): JobConfig {
+  return (job.config_json ?? {}) as JobConfig;
 }
 
 export interface UserCredentials {
