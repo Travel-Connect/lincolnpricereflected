@@ -63,6 +63,16 @@ async function dumpPageState(page: Page, label: string): Promise<void> {
   }
 }
 
+/** Normalize half-width parentheses to full-width (Lincoln uses full-width) */
+function toFullWidth(s: string): string {
+  return s.replace(/\(/g, "（").replace(/\)/g, "）");
+}
+
+/** Normalize full-width parentheses to half-width for comparison */
+function toHalfWidth(s: string): string {
+  return s.replace(/（/g, "(").replace(/）/g, ")");
+}
+
 /**
  * Check if copy source is already set correctly (input value + hidden fields).
  * Returns true if autocomplete can be skipped.
@@ -70,6 +80,9 @@ async function dumpPageState(page: Page, label: string): Promise<void> {
  * After doCopy() + doSend(true), Lincoln preserves the copy source input
  * value across months, so months 2+ within the same copy source group
  * can skip the autocomplete entirely.
+ *
+ * Comparison uses half-width normalization because Lincoln stores full-width
+ * parentheses but config may use half-width.
  */
 async function isCopySourceReady(
   page: Page,
@@ -91,16 +104,20 @@ async function isCopySourceReady(
       { inputSel: copyInputSelector },
     );
 
-    if (inputVal === copySource && selectVal === copySource && selectCd) {
+    const normalizedSource = toHalfWidth(copySource);
+    const inputMatch = toHalfWidth(inputVal) === normalizedSource;
+    const selectMatch = toHalfWidth(selectVal) === normalizedSource;
+
+    if (inputMatch && selectMatch && selectCd) {
       console.log(
         `[STEPB] Copy source "${copySource}" already set (selectPlanGrpCd="${selectCd}") — skipping autocomplete`,
       );
       return true;
     }
 
-    if (inputVal === copySource) {
+    if (inputMatch) {
       console.log(
-        `[STEPB] Copy input has "${copySource}" but hidden fields not ready ` +
+        `[STEPB] Copy input has "${inputVal}" but hidden fields not ready ` +
         `(selectPlanGrpName="${selectVal}", selectPlanGrpCd="${selectCd}") — need autocomplete`,
       );
     }
@@ -129,17 +146,23 @@ async function setCopySourceAutocomplete(
   const inputLocator = page.locator(copyInputSelector);
   await inputLocator.waitFor({ state: "visible", timeout: 5000 });
 
+  // Lincoln uses full-width parentheses — normalize before typing
+  const typingValue = toFullWidth(copySource);
+  if (typingValue !== copySource) {
+    console.log(`[STEPB] Normalized parentheses: "${copySource}" → "${typingValue}"`);
+  }
+
   let autocompleteAppeared = false;
 
   // Attempt 1: fill() + End key (fast path)
-  console.log(`[STEPB] [fast] fill("${copySource}") + press End`);
+  console.log(`[STEPB] [fast] fill("${typingValue}") + press End`);
   await inputLocator.click();
-  await inputLocator.fill(copySource);
+  await inputLocator.fill(typingValue);
 
   const fillVal = await inputLocator.inputValue();
   console.log(`[STEPB] [fast] Input value after fill: "${fillVal}"`);
 
-  if (fillVal === copySource) {
+  if (fillVal === typingValue) {
     await inputLocator.press("End");
     try {
       await page.waitForSelector(
@@ -187,12 +210,12 @@ async function setCopySourceAutocomplete(
 
   // Attempt 3: pressSequentially fallback (proven reliable)
   if (!autocompleteAppeared) {
-    console.log(`[STEPB] [fallback] pressSequentially("${copySource}")`);
+    console.log(`[STEPB] [fallback] pressSequentially("${typingValue}")`);
     await inputLocator.click({ clickCount: 3 });
     await page.waitForTimeout(100);
     await inputLocator.press("Backspace");
     await page.waitForTimeout(100);
-    await inputLocator.pressSequentially(copySource, { delay: 50 });
+    await inputLocator.pressSequentially(typingValue, { delay: 50 });
 
     try {
       await page.waitForSelector(
@@ -202,24 +225,47 @@ async function setCopySourceAutocomplete(
       console.log("[STEPB] [fallback] Autocomplete appeared via typing");
     } catch {
       throw new Error(
-        `[STEPB] No autocomplete suggestions appeared for "${copySource}".`,
+        `[STEPB] No autocomplete suggestions appeared for "${typingValue}" (config: "${copySource}").`,
       );
     }
   }
 
-  // Click the first visible autocomplete suggestion
+  // Click the autocomplete suggestion — prefer exact match over first-visible.
+  // Lincoln lists both "テストカレンダー" and "テストカレンダー（連泊）" for
+  // a search of "テストカレンダー", so we must pick the exact one.
   const acItems = page.locator("ul.ui-autocomplete li.ui-menu-item a");
   const count = await acItems.count();
   let clicked = false;
+
+  // Collect all visible suggestions
+  const suggestions: { index: number; text: string }[] = [];
   for (let i = 0; i < count; i++) {
     if (await acItems.nth(i).isVisible()) {
-      const text = await acItems.nth(i).textContent();
-      console.log(`[STEPB] Clicking autocomplete suggestion: "${text?.trim()}"`);
-      await acItems.nth(i).click();
+      const text = (await acItems.nth(i).textContent())?.trim() ?? "";
+      suggestions.push({ index: i, text });
+    }
+  }
+  console.log(`[STEPB] Autocomplete suggestions (${suggestions.length}): ${suggestions.map((s) => `"${s.text}"`).join(", ")}`);
+
+  // First pass: exact match (handle half/full-width parentheses)
+  const normalize = (s: string) => s.replace(/[（）]/g, (c) => c === "（" ? "(" : ")");
+  const normalizedSource = normalize(copySource);
+  for (const s of suggestions) {
+    if (s.text === copySource || normalize(s.text) === normalizedSource) {
+      console.log(`[STEPB] Clicking exact match: "${s.text}"`);
+      await acItems.nth(s.index).click();
       clicked = true;
       break;
     }
   }
+
+  // Fallback: click first visible (shouldn't happen for known calendars)
+  if (!clicked && suggestions.length > 0) {
+    console.warn(`[STEPB] No exact match for "${copySource}" — clicking first: "${suggestions[0].text}"`);
+    await acItems.nth(suggestions[0].index).click();
+    clicked = true;
+  }
+
   if (!clicked) {
     throw new Error("[STEPB] No visible autocomplete suggestion to click");
   }
@@ -542,7 +588,7 @@ export async function run(
       console.log(`[STEPB] networkidle reached in ${networkIdleTime - sendStartTime}ms`);
 
       // Wait for popup/alert cycle to complete
-      await page.waitForTimeout(3000);
+      await page.waitForTimeout(2000);
 
       // Log dialogs received during this send
       const newDialogs = dialogLog.slice(dialogCountBefore);
@@ -620,8 +666,8 @@ export async function run(
       // Inter-send delay: let the server finish processing before next send
       // Prevents MBLK0012 ("別の操作により更新処理中") on the next send
       if (!isLastSendOverall) {
-        console.log(`[STEPB] Waiting 3s for server processing before next send...`);
-        await page.waitForTimeout(3000);
+        console.log(`[STEPB] Waiting 2s for server processing before next send...`);
+        await page.waitForTimeout(2000);
       }
     }
   }

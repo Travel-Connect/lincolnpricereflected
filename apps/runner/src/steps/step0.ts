@@ -206,22 +206,36 @@ async function processOneCalendar(
   const saveButtonSelector = getSelector("step0.saveButton");
   console.log("[STEP0] Clicking save button...");
 
-  await Promise.all([
-    page.waitForLoadState("networkidle", { timeout: 30000 }),
-    page.locator(saveButtonSelector).click(),
-  ]);
+  // doUpdate() → confirm dialog → form POST → page reloads.
+  // Cannot use Promise.all([networkidle, click]) because networkidle
+  // may resolve before the POST navigation starts (dialog is async).
+  await page.locator(saveButtonSelector).click();
+  // Wait for the form POST navigation to fully complete
+  await page.waitForLoadState("load", { timeout: 30000 });
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+  await page.waitForTimeout(2000);
 
   page.off("dialog", dialogHandler);
   if (dialogMessages.length > 0) {
     console.log(`[STEP0] Accepted ${dialogMessages.length} dialog(s)`);
   }
 
-  // Verify save result
-  await page.waitForTimeout(1000);
-  const errorMessage = await page.evaluate(() => {
-    const errEl = document.querySelector(".c_txt-worning, .c_txt-error");
-    return errEl ? (errEl.textContent || "").trim() : null;
-  });
+  // Verify save result (with retry if context is still settling)
+  let errorMessage: string | null = null;
+  try {
+    errorMessage = await page.evaluate(() => {
+      const errEl = document.querySelector(".c_txt-worning, .c_txt-error");
+      return errEl ? (errEl.textContent || "").trim() : null;
+    });
+  } catch {
+    console.log("[STEP0] Context not ready — waiting 3s and retrying");
+    await page.waitForTimeout(3000);
+    await page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {});
+    errorMessage = await page.evaluate(() => {
+      const errEl = document.querySelector(".c_txt-worning, .c_txt-error");
+      return errEl ? (errEl.textContent || "").trim() : null;
+    }).catch(() => null);
+  }
 
   if (errorMessage) {
     throw new Error(`[STEP0] Save failed for "${calendarName}": ${errorMessage}`);
