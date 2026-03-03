@@ -15,6 +15,8 @@ import type { Job } from "../job-state.js";
 import { getJobConfig } from "../job-state.js";
 import type { CalendarMapping } from "../job-state.js";
 import { getSelector } from "../selectors.js";
+import { getFacilityLincolnId } from "../facility-lookup.js";
+import { verifyFacilityId } from "../verify-facility.js";
 import {
   loadExpectedRanks,
   rankMapToDateRank,
@@ -65,13 +67,17 @@ export async function run(
     console.log(`[STEP0]   ${calName} ← ${roomTypes.join(", ")}`);
   }
 
-  // 2. Load expected ranks from Supabase
+  // 2. Safety: verify facility ID before any data modification
+  const expectedFacilityId = await getFacilityLincolnId(job.facility_id);
+  await verifyFacilityId(page, expectedFacilityId, "STEP0");
+
+  // 3. Load expected ranks from Supabase
   const { rankMap, maxDate } = await loadExpectedRanks(jobId);
   console.log(
     `[STEP0] Rank data: ${rankMap.size} dates, max date: ${maxDate}`,
   );
 
-  // 3. Process each calendar
+  // 4. Process each calendar
   let totalUpdated = 0;
   let calendarIndex = 0;
 

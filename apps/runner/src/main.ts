@@ -104,24 +104,20 @@ async function resolveExcelPath(job: Job): Promise<string> {
   return localPath;
 }
 
-/** Get credentials: from job's user_id or fallback to env vars */
+/** Get credentials: from job's user_id (required) or fallback to env vars (only if no user_id) */
 async function getCredentials(job: Job): Promise<UserCredentials> {
   if (job.user_id) {
-    try {
-      return await getUserCredentials(job.user_id);
-    } catch {
-      console.log(
-        "[runner] User credentials not found, falling back to env vars",
-      );
-    }
+    // user_id が指定されている場合、DB から取得。失敗時は env にフォールバックせずエラーにする
+    return await getUserCredentials(job.user_id);
   }
 
+  // user_id が無い場合のみ env vars を使用
   const loginId = process.env.LINCOLN_LOGIN_ID;
   const loginPw = process.env.LINCOLN_LOGIN_PW;
 
   if (!loginId || !loginPw) {
     throw new Error(
-      "Missing LINCOLN_LOGIN_ID/PW in env and no user credentials in DB",
+      "Missing LINCOLN_LOGIN_ID/PW in env and no user_id on job",
     );
   }
 
