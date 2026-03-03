@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import { typedData, typedDataOrEmpty } from "@/lib/supabase/typed-query";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -104,9 +105,9 @@ export function JobDetailClient({
           .eq("job_id", job.id)
           .order("created_at", { ascending: true }),
       ]);
-      if (jobRes.data) setJob(jobRes.data as unknown as Job);
-      if (stepsRes.data) setSteps(stepsRes.data as unknown as JobStep[]);
-      if (logsRes.data) setLogs(logsRes.data as unknown as JobLog[]);
+      if (jobRes.data) setJob(typedData<Job>(jobRes.data));
+      if (stepsRes.data) setSteps(typedDataOrEmpty<JobStep>(stepsRes.data));
+      if (logsRes.data) setLogs(typedDataOrEmpty<JobLog>(logsRes.data));
     };
 
     const interval = setInterval(poll, 3000);

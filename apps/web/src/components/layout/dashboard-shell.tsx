@@ -1,7 +1,7 @@
 "use client";
 
 import type { User } from "@supabase/supabase-js";
-import type { Facility, UserLincolnCredentials } from "@/lib/types/database";
+import type { Facility, UserLincolnCredentials, Runner } from "@/lib/types/database";
 import { AppProvider } from "@/lib/context/app-context";
 import { Sidebar } from "./sidebar";
 import { Header } from "./header";
@@ -12,6 +12,7 @@ interface DashboardShellProps {
   user: User;
   credentials: UserLincolnCredentials | null;
   facilities: Facility[];
+  runners: Runner[];
 }
 
 export function DashboardShell({
@@ -19,12 +20,14 @@ export function DashboardShell({
   user,
   credentials,
   facilities,
+  runners,
 }: DashboardShellProps) {
   return (
     <AppProvider
       user={user}
       credentials={credentials}
       facilities={facilities}
+      runners={runners}
     >
       <div className="flex h-screen overflow-hidden">
         <Sidebar />

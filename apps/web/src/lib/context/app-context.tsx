@@ -11,12 +11,14 @@ import type {
   Facility,
   UserLincolnCredentials,
   Environment,
+  Runner,
 } from "@/lib/types/database";
 
 interface AppContextType {
   user: User;
   credentials: UserLincolnCredentials | null;
   facilities: Facility[];
+  runners: Runner[];
   currentFacility: Facility | null;
   setCurrentFacility: (f: Facility) => void;
   environment: Environment;
@@ -30,6 +32,7 @@ interface AppProviderProps {
   user: User;
   credentials: UserLincolnCredentials | null;
   facilities: Facility[];
+  runners: Runner[];
 }
 
 export function AppProvider({
@@ -37,6 +40,7 @@ export function AppProvider({
   user,
   credentials,
   facilities,
+  runners,
 }: AppProviderProps) {
   // Default to null — user must explicitly select a facility
   const [currentFacility, setCurrentFacility] = useState<Facility | null>(
@@ -50,6 +54,7 @@ export function AppProvider({
         user,
         credentials,
         facilities,
+        runners,
         currentFacility,
         setCurrentFacility,
         environment,

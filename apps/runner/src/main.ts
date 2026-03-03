@@ -1,9 +1,10 @@
 /**
  * Lincoln Runner — CLI entry point.
  *
- * Two modes:
+ * Three modes:
  *   npx tsx src/main.ts --job-id <uuid>   — run a single job
  *   npx tsx src/main.ts --poll             — poll for PENDING jobs continuously
+ *   npx tsx src/main.ts --sync             — process one sync request and exit
  *
  * Auth flow: login → 2FA (if needed) → session save → steps
  * Session persistence: reuses saved cookies to skip 2FA on subsequent runs.
@@ -15,7 +16,7 @@ import { resolve } from "path";
 // Load .env from project root (not CWD)
 const PROJECT_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 config({ path: resolve(PROJECT_ROOT, ".env") });
-import { chromium } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import {
   getJob,
   getNextSteps,
@@ -30,6 +31,7 @@ import {
   writeJobLog,
   getUserCredentials,
   downloadFromStorage,
+  getJobConfig,
   type Job,
   type StepName,
   type UserCredentials,
@@ -47,12 +49,22 @@ import {
   clearSession,
 } from "./auth/index.js";
 import { processNextSyncRequest } from "./sync-calendar.js";
+import { LINCOLN_BASE } from "./constants.js";
+import { setupFileLogger, type FileLogger } from "./file-logger.js";
 
 const POLL_INTERVAL_MS = 5000;
 
+/** Thrown when 2FA is required but browser is in headless mode */
+class Needs2FAHeadlessError extends Error {
+  constructor() {
+    super("2FA required — headless mode cannot handle interactive 2FA");
+    this.name = "Needs2FAHeadlessError";
+  }
+}
+
 /** Parse CLI args */
 interface CliArgs {
-  mode: "single" | "poll";
+  mode: "single" | "poll" | "sync";
   jobId?: string;
   keepBrowser: boolean;
 }
@@ -65,10 +77,15 @@ function parseArgs(): CliArgs {
     return { mode: "poll", keepBrowser };
   }
 
+  if (args.includes("--sync")) {
+    return { mode: "sync", keepBrowser };
+  }
+
   const idx = args.indexOf("--job-id");
   if (idx === -1 || idx + 1 >= args.length) {
     console.error("Usage: npx tsx src/main.ts --job-id <uuid> [--keep-browser]");
     console.error("       npx tsx src/main.ts --poll [--keep-browser]");
+    console.error("       npx tsx src/main.ts --sync");
     process.exit(1);
   }
   return { mode: "single", jobId: args[idx + 1], keepBrowser };
@@ -95,24 +112,20 @@ async function resolveExcelPath(job: Job): Promise<string> {
   return localPath;
 }
 
-/** Get credentials: from job's user_id or fallback to env vars */
+/** Get credentials: from job's user_id (required) or fallback to env vars (only if no user_id) */
 async function getCredentials(job: Job): Promise<UserCredentials> {
   if (job.user_id) {
-    try {
-      return await getUserCredentials(job.user_id);
-    } catch {
-      console.log(
-        "[runner] User credentials not found, falling back to env vars",
-      );
-    }
+    // user_id が指定されている場合、DB から取得。失敗時は env にフォールバックせずエラーにする
+    return await getUserCredentials(job.user_id);
   }
 
+  // user_id が無い場合のみ env vars を使用
   const loginId = process.env.LINCOLN_LOGIN_ID;
   const loginPw = process.env.LINCOLN_LOGIN_PW;
 
   if (!loginId || !loginPw) {
     throw new Error(
-      "Missing LINCOLN_LOGIN_ID/PW in env and no user credentials in DB",
+      "Missing LINCOLN_LOGIN_ID/PW in env and no user_id on job",
     );
   }
 
@@ -125,6 +138,10 @@ async function executeJob(
   keepBrowserOpen = false,
 ): Promise<void> {
   const jobId = job.id;
+
+  // Start file logging to OneDrive shared folder
+  const logger = setupFileLogger(jobId);
+
   console.log(`[runner] Starting job ${jobId}`);
   await writeJobLog(jobId, null, "info", "ジョブ開始");
 
@@ -147,20 +164,34 @@ async function executeJob(
   console.log(`[runner] Steps to execute: ${steps.join(" → ")}`);
   await writeJobLog(jobId, null, "info", `実行ステップ: ${steps.join(" → ")}`);
 
+  // Log job config details (calendar mappings + process B rows)
+  const jobConfig = getJobConfig(job);
+  if (jobConfig.calendar_mappings && jobConfig.calendar_mappings.length > 0) {
+    console.log(`[runner] カレンダーマッピング (${jobConfig.calendar_mappings.length} 件):`);
+    for (const m of jobConfig.calendar_mappings) {
+      console.log(`[runner]   ${m.lincoln_calendar_id} ← ${m.excel_calendar}`);
+    }
+  }
+  if (jobConfig.process_b_rows && jobConfig.process_b_rows.length > 0) {
+    console.log(`[runner] 処理Bマッピング (${jobConfig.process_b_rows.length} 件):`);
+    for (const r of jobConfig.process_b_rows) {
+      console.log(`[runner]   ${r.copy_source} → ${r.plan_group_set}`);
+    }
+  }
+
   // Launch browser (maximized)
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
-  const browser = await chromium.launch({
-    headless,
-    args: ["--start-maximized"],
-  });
-  const contextOptions = hasSavedSession()
-    ? { storageState: getSessionPath() }
-    : {};
-  const context = await browser.newContext({
-    ...contextOptions,
-    viewport: null, // use full window size (maximized)
-  });
-  const page = await context.newPage();
+
+  /** Helper: launch browser + context + page */
+  async function launchBrowser(useHeadless: boolean, withSession: boolean) {
+    const b = await chromium.launch({ headless: useHeadless, args: ["--start-maximized"] });
+    const opts = withSession && hasSavedSession() ? { storageState: getSessionPath() } : {};
+    const c = await b.newContext({ ...opts, viewport: null });
+    const p = await c.newPage();
+    return { browser: b, context: c, page: p };
+  }
+
+  let { browser, context, page } = await launchBrowser(headless, true);
 
   const recorder = new NetworkRecorder();
   recorder.attach(page);
@@ -171,7 +202,25 @@ async function executeJob(
     let didFreshLogin = false;
     if (needsBrowser) {
       const creds = await getCredentials(job);
-      didFreshLogin = await performAuth(page, context, jobId, creds);
+      try {
+        didFreshLogin = await performAuth(page, context, jobId, creds, headless);
+      } catch (err) {
+        if (err instanceof Needs2FAHeadlessError) {
+          // 2FA required in headless — restart browser in headful mode
+          console.log("[runner] 2FA 検出 — ヘッド付きモードで再起動します");
+          await writeJobLog(jobId, null, "info", "2FA 検出 — ヘッド付きモードに切替");
+          recorder.detach(page);
+          await browser.close();
+
+          ({ browser, context, page } = await launchBrowser(false, false));
+          recorder.attach(page);
+
+          // Re-authenticate in headful mode (user can see the 2FA screen)
+          didFreshLogin = await performAuth(page, context, jobId, creds, false);
+        } else {
+          throw err;
+        }
+      }
     }
 
     // If fresh login was performed, ensure STEPA runs (to switch facility)
@@ -246,8 +295,20 @@ async function executeJob(
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[runner] ✗ Job failed: ${message}`);
     await updateJobStatus(jobId, "FAILED");
+
+    // Save network log for debugging failed jobs
+    try {
+      const artifactDir = resolve(PROJECT_ROOT, "data", "artifacts", `job-${jobId}`);
+      const { mkdirSync } = await import("node:fs");
+      mkdirSync(artifactDir, { recursive: true });
+      const logPath = recorder.save(artifactDir, "failure");
+      console.log(`[runner] Network log saved: ${logPath} (${recorder.size} entries)`);
+    } catch (saveErr) {
+      console.error(`[runner] Failed to save network log: ${saveErr instanceof Error ? saveErr.message : saveErr}`);
+    }
   } finally {
     recorder.detach(page);
+    logger.close();
     if (keepBrowserOpen) {
       console.log(
         "[runner] ブラウザを開いたまま保持中。確認後 Ctrl+C で終了してください。",
@@ -264,12 +325,16 @@ async function executeJob(
  * Perform Lincoln authentication.
  * Tries saved session first; falls back to fresh login + 2FA.
  * Returns true if a fresh login was performed (session was not restored).
+ *
+ * @param isHeadless - If true and 2FA is required, throws Needs2FAHeadlessError
+ *   so the caller can restart in headful mode.
  */
 async function performAuth(
-  page: import("playwright").Page,
-  context: import("playwright").BrowserContext,
+  page: Page,
+  context: BrowserContext,
   jobId: string,
   creds: UserCredentials,
+  isHeadless = false,
 ): Promise<boolean> {
   // Try saved session
   if (hasSavedSession()) {
@@ -280,7 +345,9 @@ async function performAuth(
         "https://www.tl-lincoln.net/accomodation/Ascsc1010InitAction.do",
         { waitUntil: "networkidle", timeout: 15000 },
       )
-      .catch(() => {});
+      .catch((err) => {
+        console.log(`[runner] Session restore navigation failed: ${err instanceof Error ? err.message : err}`);
+      });
 
     const title = await page.title();
     if (title.includes("トップページ") || title.includes("メニュー")) {
@@ -302,6 +369,10 @@ async function performAuth(
   );
 
   if (result.needs2FA) {
+    if (isHeadless) {
+      // Headless cannot display the 2FA screen — signal caller to restart headful
+      throw new Needs2FAHeadlessError();
+    }
     await updateJobStatus(jobId, "AWAITING_2FA");
     await writeJobLog(
       jobId,
@@ -329,14 +400,12 @@ async function performAuth(
   return true; // fresh login performed
 }
 
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
 /**
  * Navigate to the 5010 price management page for visual verification.
  * Selects the plan group set configured in the job if available.
  */
 async function navigateToVerificationPage(
-  page: import("playwright").Page,
+  page: Page,
   job: Job,
 ): Promise<void> {
   try {
@@ -346,8 +415,8 @@ async function navigateToVerificationPage(
     console.log(`[runner] On page: ${await page.title()}`);
 
     // Try to select the configured plan group set
-    const planGroupSetNames =
-      (job as any).config_json?.plan_group_set_names as string[] | undefined;
+    const config = getJobConfig(job);
+    const planGroupSetNames = config.plan_group_set_names;
     const targetName = planGroupSetNames?.[0];
 
     if (targetName) {
@@ -416,10 +485,22 @@ async function pollLoop(keepBrowser: boolean): Promise<void> {
 
 // --- Entry point ---
 async function main(): Promise<void> {
+  const machineName = process.env.COMPUTERNAME;
+  if (!machineName) {
+    console.error("[runner] COMPUTERNAME environment variable is not set. Cannot identify this runner.");
+    process.exit(1);
+  }
+  console.log(`[runner] Machine: ${machineName}`);
+
   const args = parseArgs();
 
   if (args.mode === "poll") {
     await pollLoop(args.keepBrowser);
+  } else if (args.mode === "sync") {
+    const didSync = await processNextSyncRequest();
+    if (!didSync) {
+      console.log("[runner] No pending sync requests");
+    }
   } else {
     const job = await getJob(args.jobId!);
     await updateJobStatus(args.jobId!, "RUNNING");

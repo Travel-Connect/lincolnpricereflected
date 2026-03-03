@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { typedData, typedDataOrEmpty } from "@/lib/supabase/typed-query";
 import type { Job, JobStep, Artifact } from "@/lib/types/database";
 import { JobDetailClient } from "./job-detail-client";
 
@@ -34,9 +35,9 @@ export default async function JobDetailPage({
 
   return (
     <JobDetailClient
-      initialJob={job as unknown as Job}
-      initialSteps={(stepsRes.data as unknown as JobStep[]) ?? []}
-      initialArtifacts={(artifactsRes.data as unknown as Artifact[]) ?? []}
+      initialJob={typedData<Job>(job)}
+      initialSteps={typedDataOrEmpty<JobStep>(stepsRes.data)}
+      initialArtifacts={typedDataOrEmpty<Artifact>(artifactsRes.data)}
     />
   );
 }

@@ -76,28 +76,66 @@ export function StepThreeScreen({ state, setState }: Props) {
 
           {/* Calendar mappings */}
           {state.execMode !== "B_only" && (
-            <SummaryRow
-              icon={Calendar}
-              label="カレンダーマッピング"
-              value={
-                <span className="text-sm text-slate-600">
-                  {state.calendarMappings.length} 件
-                </span>
-              }
-            />
+            <>
+              <SummaryRow
+                icon={Calendar}
+                label="カレンダーマッピング"
+                value={
+                  <span className="text-sm text-slate-600">
+                    {state.calendarMappings.length} 件
+                  </span>
+                }
+              />
+              {state.calendarMappings.length > 0 && (
+                <div className="ml-6 space-y-1">
+                  {state.calendarMappings.map((m, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center gap-2 text-xs text-slate-500"
+                    >
+                      <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">
+                        {m.lincoln_calendar_id}
+                      </span>
+                      <span className="text-slate-400">←</span>
+                      <span>{m.excel_calendar}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
           )}
 
           {/* Process B rows */}
           {state.execMode !== "A_only" && (
-            <SummaryRow
-              icon={ListChecks}
-              label="処理B マッピング"
-              value={
-                <span className="text-sm text-slate-600">
-                  {state.processBRows.filter((r) => r.copy_source).length} 件
-                </span>
-              }
-            />
+            <>
+              <SummaryRow
+                icon={ListChecks}
+                label="処理B マッピング"
+                value={
+                  <span className="text-sm text-slate-600">
+                    {state.processBRows.filter((r) => r.copy_source).length} 件
+                  </span>
+                }
+              />
+              {state.processBRows.filter((r) => r.copy_source).length > 0 && (
+                <div className="ml-6 space-y-1">
+                  {state.processBRows
+                    .filter((r) => r.copy_source)
+                    .map((r, i) => (
+                      <div
+                        key={i}
+                        className="flex items-center gap-2 text-xs text-slate-500"
+                      >
+                        <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">
+                          {r.copy_source}
+                        </span>
+                        <span className="text-slate-400">→</span>
+                        <span>{r.plan_group_set}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>

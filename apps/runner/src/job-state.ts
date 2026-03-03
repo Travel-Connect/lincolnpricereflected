@@ -19,6 +19,33 @@ export type JobStatus =
 
 export type ExecMode = "A_only" | "B_only" | "A_and_B";
 
+/** Calendar mapping from Excel room type to Lincoln calendar */
+export interface CalendarMapping {
+  excel_calendar: string;
+  lincoln_calendar_id: string;
+}
+
+/** Process B mapping row */
+export interface ProcessBRow {
+  copy_source: string;
+  plan_group_set: string;
+  plan_name: string;
+}
+
+/** Output plan for STEPC */
+export interface OutputPlan {
+  value: string;
+  label: string;
+}
+
+/** Typed job config — contents of config_json JSONB column */
+export interface JobConfig {
+  calendar_mappings?: CalendarMapping[];
+  process_b_rows?: ProcessBRow[];
+  output_plans?: OutputPlan[];
+  plan_group_set_names?: string[];
+}
+
 export interface Job {
   id: string;
   facility_id: string;
@@ -34,6 +61,11 @@ export interface Job {
   target_period_to: string | null;
   config_json: Record<string, unknown> | null;
   retry_count: number;
+}
+
+/** Type-safe accessor for job config */
+export function getJobConfig(job: Job): JobConfig {
+  return (job.config_json ?? {}) as JobConfig;
 }
 
 export interface UserCredentials {
@@ -154,12 +186,21 @@ export async function recordStepFailure(
  * Claim the next PENDING job (oldest first).
  * Uses optimistic locking: only claims if status is still PENDING.
  */
-export async function claimNextJob(): Promise<Job | null> {
-  // Find oldest pending job
-  const { data: pending } = await getSupabase()
+export async function claimNextJob(targetMachine?: string): Promise<Job | null> {
+  // Only claim jobs explicitly targeted to this machine (never claim NULL target)
+  const machineName = targetMachine ?? process.env.COMPUTERNAME ?? "";
+  if (!machineName) {
+    console.log("[runner] COMPUTERNAME not set — skipping job claim");
+    return null;
+  }
+
+  const query = getSupabase()
     .from("jobs")
     .select("id")
     .eq("status", "PENDING")
+    .eq("target_machine", machineName);
+
+  const { data: pending } = await query
     .order("created_at", { ascending: true })
     .limit(1);
 
@@ -250,12 +291,22 @@ export interface CalendarSyncRequest {
   status: string;
 }
 
-/** Claim the next PENDING calendar sync request */
+/** Claim the next PENDING calendar sync request for this machine */
 export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null> {
-  const { data: pending } = await getSupabase()
+  const machineName = process.env.COMPUTERNAME ?? "";
+  if (!machineName) {
+    console.log("[runner] COMPUTERNAME not set — skipping sync claim");
+    return null;
+  }
+
+  // Only claim requests explicitly targeted to this machine (never claim NULL target)
+  const query = getSupabase()
     .from("calendar_sync_requests")
     .select("id, facility_id, status")
     .eq("status", "PENDING")
+    .eq("target_machine", machineName);
+
+  const { data: pending } = await query
     .order("created_at", { ascending: true })
     .limit(1);
 

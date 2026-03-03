@@ -181,6 +181,27 @@ export function rankMapToDateRank(
 }
 
 /**
+ * Flatten RankMap to date → rankCode, filtered by specific room types.
+ * Used when calendar_mappings specify which room types map to each calendar.
+ */
+export function rankMapToDateRankForRoomTypes(
+  rankMap: RankMap,
+  roomTypes: string[],
+): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (const [date, roomMap] of rankMap) {
+    for (const rt of roomTypes) {
+      const rank = roomMap.get(rt);
+      if (rank) {
+        obj[date] = rank;
+        break; // first match wins
+      }
+    }
+  }
+  return obj;
+}
+
+/**
  * Selectors needed inside page.evaluate() for DOM manipulation.
  */
 export interface DomSelectors {

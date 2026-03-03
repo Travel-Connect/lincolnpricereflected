@@ -35,6 +35,7 @@ export interface CreateJobInput {
   stay_type: "A" | "B" | null;
   config_json: Record<string, unknown>;
   retry_count: number;
+  target_machine: string;
 }
 
 export async function createJob(input: CreateJobInput) {
@@ -57,6 +58,7 @@ export async function createJob(input: CreateJobInput) {
       stay_type: input.stay_type,
       config_json: input.config_json,
       retry_count: input.retry_count,
+      target_machine: input.target_machine,
     })
     .select("id")
     .single();
@@ -91,16 +93,22 @@ export async function saveCalendarPattern(input: {
       .eq("id", input.id)
       .eq("user_id", user.id);
     if (error) throw new Error(error.message);
+    return { id: input.id };
   } else {
     // Insert new
-    const { error } = await supabase.from("calendar_patterns").insert({
-      facility_id: input.facility_id,
-      user_id: user.id,
-      name: input.name,
-      is_default: input.is_default,
-      mappings: input.mappings,
-    });
+    const { data, error } = await supabase
+      .from("calendar_patterns")
+      .insert({
+        facility_id: input.facility_id,
+        user_id: user.id,
+        name: input.name,
+        is_default: input.is_default,
+        mappings: input.mappings,
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
+    return { id: data.id };
   }
 }
 
@@ -128,15 +136,21 @@ export async function saveProcessBPattern(input: {
       .eq("id", input.id)
       .eq("user_id", user.id);
     if (error) throw new Error(error.message);
+    return { id: input.id };
   } else {
-    const { error } = await supabase.from("process_b_patterns").insert({
-      facility_id: input.facility_id,
-      user_id: user.id,
-      name: input.name,
-      is_default: input.is_default,
-      rows: input.rows,
-    });
+    const { data, error } = await supabase
+      .from("process_b_patterns")
+      .insert({
+        facility_id: input.facility_id,
+        user_id: user.id,
+        name: input.name,
+        is_default: input.is_default,
+        rows: input.rows,
+      })
+      .select("id")
+      .single();
     if (error) throw new Error(error.message);
+    return { id: data.id };
   }
 }
 
@@ -226,7 +240,12 @@ export async function deleteProcessBPattern(patternId: string) {
 
 export async function requestCalendarSync(
   facilityId: string,
+  targetMachine: string,
 ): Promise<{ id: string }> {
+  if (!targetMachine) {
+    throw new Error("Runner PC が選択されていません。Step 1 で Runner PC を選択してください。");
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -235,7 +254,7 @@ export async function requestCalendarSync(
 
   const { data, error } = await supabase
     .from("calendar_sync_requests")
-    .insert({ facility_id: facilityId })
+    .insert({ facility_id: facilityId, target_machine: targetMachine })
     .select("id")
     .single();
 

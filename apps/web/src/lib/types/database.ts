@@ -46,6 +46,7 @@ export interface Job {
   summary_json: Record<string, unknown> | null;
   result_json: Record<string, unknown> | null;
   config_json: JobConfig | null;
+  target_machine: string | null;
   retry_count: number;
   created_at: string;
   updated_at: string;
@@ -195,6 +196,13 @@ export interface FacilityOutputPlan {
   label: string;
   stay_type: StayType;
   is_default: boolean;
+  created_at: string;
+}
+
+export interface Runner {
+  id: string;
+  machine_name: string;
+  last_heartbeat: string;
   created_at: string;
 }
 

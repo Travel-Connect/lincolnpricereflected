@@ -14,9 +14,12 @@
 
 import type { Page } from "playwright";
 import type { Job } from "../job-state.js";
+import { getJobConfig } from "../job-state.js";
+import type { OutputPlan } from "../job-state.js";
 import { getSelector } from "../selectors.js";
 import { getFacilityLincolnId } from "../facility-lookup.js";
-import { FacilityMismatchError, VerificationFailedError } from "../errors.js";
+import { verifyFacilityId } from "../verify-facility.js";
+import { VerificationFailedError } from "../errors.js";
 import { saveScreenshot, saveText } from "../artifact-writer.js";
 import { loadExpectedRanks } from "./step0-helpers.js";
 import {
@@ -26,14 +29,7 @@ import {
 } from "./step-c-helpers.js";
 import { resolve } from "node:path";
 import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
-
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-
-/** Plan to select for output */
-export interface OutputPlan {
-  value: string; // "roomTypeId,planId" e.g. "6,25"
-  label: string; // display name for logging
-}
+import { LINCOLN_BASE } from "../constants.js";
 
 /** Options for STEPC verification */
 export interface StepCOptions {
@@ -59,8 +55,8 @@ export async function run(
   console.log("[STEPC] Output & verification — start");
 
   // Resolve output plans: config_json > options > defaults
-  const configPlans = (job.config_json as Record<string, unknown> | null)
-    ?.output_plans as OutputPlan[] | undefined;
+  const config = getJobConfig(job);
+  const configPlans = config.output_plans;
   const plans = configPlans || options?.outputPlans || DEFAULT_OUTPUT_PLANS;
   console.log(`[STEPC] Plan source: ${configPlans ? "config_json" : options?.outputPlans ? "options" : "defaults"}`);
 
@@ -74,17 +70,7 @@ export async function run(
   console.log(`[STEPC] On page: ${await page.title()}`);
 
   // 2. Verify facility ID via header
-  const facilityIdSelector = getSelector("stepA.facilityIdText");
-  const actualId = (
-    await page.locator(facilityIdSelector).first().textContent()
-  )?.trim();
-  console.log(
-    `[STEPC] Facility ID check: expected="${expectedId}", actual="${actualId}"`,
-  );
-  if (actualId !== expectedId) {
-    throw new FacilityMismatchError(expectedId, actualId ?? "");
-  }
-  console.log("[STEPC] Facility ID verified OK");
+  await verifyFacilityId(page, expectedId, "STEPC");
 
   // 3. Set output period: end date = 2 months later, end of month
   const now = new Date();
@@ -240,14 +226,67 @@ export async function run(
 
   console.log("\n[STEPC] === 突合検証開始 ===");
 
+  // Build stay type overrides from process_b_rows copy_source.
+  // The copy source name (e.g. "テストカレンダー（連泊）") indicates the stay type
+  // more reliably than the plan group name in the output xlsx (e.g. "カレンダーテスト"
+  // which contains no stay type keyword).
+  const processBRows = config.process_b_rows;
+  let stayTypeOverrides: Map<string, "単泊" | "連泊"> | undefined;
+  if (processBRows && processBRows.length > 0) {
+    stayTypeOverrides = new Map();
+    for (const row of processBRows) {
+      if (row.copy_source && row.plan_group_set) {
+        const stayType = row.copy_source.includes("連泊") ? "連泊" : "単泊";
+        stayTypeOverrides.set(row.plan_group_set, stayType);
+      }
+    }
+    if (stayTypeOverrides.size > 0) {
+      console.log(
+        `[STEPC] Stay type overrides from copy source: ` +
+        [...stayTypeOverrides.entries()].map(([k, v]) => `${k}→${v}`).join(", "),
+      );
+    } else {
+      stayTypeOverrides = undefined;
+    }
+  }
+
   // Parse the output xlsx
-  const parsed = parseOutputXlsx(savedPath, options?.roomTypeMapping);
+  const parsed = parseOutputXlsx(savedPath, options?.roomTypeMapping, stayTypeOverrides);
 
   // Load expected ranks from Supabase
   const { rankMap: expectedRankMap } = await loadExpectedRanks(jobId);
 
+  // Determine which room types to verify based on Process B plan selections.
+  // process_b_rows plan_name format: "--和室コンド--|カレンダーテスト"
+  // Extract room type group: strip "--" markers → "和室コンド"
+  // Then match against output xlsx planBlock.roomTypeGroup to find mapped room types.
+  let verifyRoomTypes: string[] | undefined;
+  if (processBRows && processBRows.length > 0) {
+    const targetGroups = new Set<string>();
+    for (const row of processBRows) {
+      if (!row.plan_name) continue;
+      const roomTypePart = row.plan_name.split("|")[0]; // "--和室コンド--"
+      const stripped = roomTypePart.replace(/^-+/, "").replace(/-+$/, ""); // "和室コンド"
+      if (stripped) targetGroups.add(stripped);
+    }
+
+    if (targetGroups.size > 0) {
+      // Match output xlsx plan blocks by roomTypeGroup → collect their mappedRoomTypes
+      verifyRoomTypes = [
+        ...new Set(
+          parsed.planBlocks
+            .filter((block) => targetGroups.has(block.roomTypeGroup))
+            .map((block) => block.mappedRoomType),
+        ),
+      ];
+      console.log(
+        `[STEPC] Verification scoped to Process B targets: ${[...targetGroups].join(", ")} → ${verifyRoomTypes.join(", ")}`,
+      );
+    }
+  }
+
   // Run verification
-  const result = verifyRanks(expectedRankMap, parsed);
+  const result = verifyRanks(expectedRankMap, parsed, verifyRoomTypes);
 
   // Log and save the result
   console.log(`\n${result.summary}`);

@@ -94,11 +94,16 @@ function extractStayType(planGroupName: string): "単泊" | "連泊" {
 
 /**
  * Map output xlsx room type + plan name to input Excel room_type.
+ *
+ * Stay type is determined by:
+ *   1. stayTypeOverrides (from process_b_rows copy_source) — highest priority
+ *   2. extractStayType(planGroupName) — fallback (keyword matching)
  */
 function mapRoomType(
   roomTypeGroup: string,
   planGroupName: string,
   mapping: RoomTypeMapping,
+  stayTypeOverrides?: Map<string, "単泊" | "連泊">,
 ): string {
   const baseName = mapping[roomTypeGroup];
   if (!baseName) {
@@ -107,7 +112,7 @@ function mapRoomType(
         `Add it to the room type mapping.`,
     );
   }
-  const stayType = extractStayType(planGroupName);
+  const stayType = stayTypeOverrides?.get(planGroupName) ?? extractStayType(planGroupName);
   return `${baseName}(${stayType})`;
 }
 
@@ -172,11 +177,14 @@ function resolveDateWithYear(
  *
  * @param filePath - Path to the downloaded xlsx file
  * @param roomTypeMapping - Optional room type mapping override
+ * @param stayTypeOverrides - Optional stay type override per plan group name
+ *   (derived from process_b_rows copy_source, e.g. "カレンダーテスト" → "連泊")
  * @returns Parsed rank entries with dates and room types
  */
 export function parseOutputXlsx(
   filePath: string,
   roomTypeMapping: RoomTypeMapping = DEFAULT_ROOM_TYPE_MAPPING,
+  stayTypeOverrides?: Map<string, "単泊" | "連泊">,
 ): ParsedOutputXlsx {
   const workbook = XLSX.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
@@ -251,6 +259,7 @@ export function parseOutputXlsx(
       roomTypeGroup,
       planGroupName,
       roomTypeMapping,
+      stayTypeOverrides,
     );
 
     // Extract dates from col D onwards
@@ -331,19 +340,33 @@ export function parseOutputXlsx(
  *
  * @param expectedRankMap - Expected ranks from Supabase (date→roomType→rankCode)
  * @param actual - Parsed output xlsx data
+ * @param mappedRoomTypes - If provided, only verify these room types (from calendar_mappings)
  * @returns Verification result with match/mismatch details
  */
 export function verifyRanks(
   expectedRankMap: RankMap,
   actual: ParsedOutputXlsx,
+  mappedRoomTypes?: string[],
 ): VerificationResult {
+  // Build a Set for fast lookup if mappedRoomTypes is provided
+  const roomTypeFilter = mappedRoomTypes
+    ? new Set(mappedRoomTypes)
+    : null;
+
   const mismatches: MismatchDetail[] = [];
   let matchCount = 0;
   let missingInExpected = 0;
   let missingInActual = 0;
+  let skippedUnmapped = 0;
 
   // Check each actual entry against expected
   for (const entry of actual.entries) {
+    // Skip room types not in calendar mappings
+    if (roomTypeFilter && !roomTypeFilter.has(entry.roomType)) {
+      skippedUnmapped++;
+      continue;
+    }
+
     const dateMap = expectedRankMap.get(entry.date);
     if (!dateMap) {
       missingInExpected++;
@@ -374,6 +397,10 @@ export function verifyRanks(
       continue; // Outside output period
     }
     for (const [roomType] of roomMap) {
+      // Skip room types not in calendar mappings
+      if (roomTypeFilter && !roomTypeFilter.has(roomType)) {
+        continue;
+      }
       const found = actual.entries.some(
         (e) => e.date === date && e.roomType === roomType,
       );
@@ -381,6 +408,10 @@ export function verifyRanks(
         missingInActual++;
       }
     }
+  }
+
+  if (skippedUnmapped > 0) {
+    console.log(`[STEPC] Skipped ${skippedUnmapped} entries for unmapped room types`);
   }
 
   const totalChecked = matchCount + mismatches.length;

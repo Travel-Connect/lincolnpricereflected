@@ -28,10 +28,7 @@ import {
   saveSession,
   clearSession,
 } from "./auth/index.js";
-
-const LINCOLN_BASE = "https://www.tl-lincoln.net/accomodation/";
-const TOP_PAGE_URL = LINCOLN_BASE + "Ascsc1010InitAction.do";
-const MAX_SWITCH_ATTEMPTS = 3;
+import { LINCOLN_BASE, TOP_PAGE_URL, MAX_SWITCH_ATTEMPTS } from "./constants.js";
 
 /** Check for and process one pending calendar sync request. Returns true if one was processed. */
 export async function processNextSyncRequest(): Promise<boolean> {
@@ -51,6 +48,14 @@ export async function processNextSyncRequest(): Promise<boolean> {
   }
 }
 
+/** Thrown when 2FA is required but browser is in headless mode */
+class Needs2FAHeadlessError extends Error {
+  constructor() {
+    super("2FA required — headless mode cannot handle interactive 2FA");
+    this.name = "Needs2FAHeadlessError";
+  }
+}
+
 /** Execute a single sync request — scrapes both calendars and plan group sets */
 async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   const { lincoln_id, name: facilityName } = await getFacilityInfo(req.facility_id);
@@ -58,16 +63,32 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
 
   // Launch browser
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
-  const browser = await chromium.launch({ headless });
-  const contextOptions = hasSavedSession()
-    ? { storageState: getSessionPath() }
-    : {};
-  const context = await browser.newContext(contextOptions);
-  const page = await context.newPage();
+
+  async function launchBrowser(useHeadless: boolean, withSession: boolean) {
+    const b = await chromium.launch({ headless: useHeadless });
+    const opts = withSession && hasSavedSession() ? { storageState: getSessionPath() } : {};
+    const c = await b.newContext(opts);
+    const p = await c.newPage();
+    return { browser: b, context: c, page: p };
+  }
+
+  let { browser, context, page } = await launchBrowser(headless, true);
 
   try {
-    // Auth
-    await performSyncAuth(page, context);
+    // Auth — with 2FA headful fallback
+    try {
+      await performSyncAuth(page, context, headless);
+    } catch (err) {
+      if (err instanceof Needs2FAHeadlessError) {
+        console.log("[sync] 2FA 検出 — ヘッド付きモードで再起動します");
+        await browser.close();
+
+        ({ browser, context, page } = await launchBrowser(false, false));
+        await performSyncAuth(page, context, false);
+      } else {
+        throw err;
+      }
+    }
 
     // Switch facility
     await switchToFacility(page, facilityName, lincoln_id);
@@ -105,17 +126,25 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   }
 }
 
-/** Auth for sync — similar to main.ts performAuth but without job logging */
+/**
+ * Auth for sync — similar to main.ts performAuth but without job logging.
+ *
+ * @param isHeadless - If true and 2FA is required, throws Needs2FAHeadlessError
+ *   so the caller can restart in headful mode.
+ */
 async function performSyncAuth(
   page: Page,
   context: BrowserContext,
+  isHeadless = false,
 ): Promise<void> {
   // Try saved session
   if (hasSavedSession()) {
     console.log("[sync] Attempting session restore...");
     await page
       .goto(TOP_PAGE_URL, { waitUntil: "networkidle", timeout: 15000 })
-      .catch(() => {});
+      .catch((err) => {
+        console.log(`[sync] Session restore navigation failed: ${err instanceof Error ? err.message : err}`);
+      });
 
     const title = await page.title();
     if (title.includes("トップページ") || title.includes("メニュー")) {
@@ -137,6 +166,9 @@ async function performSyncAuth(
   const result = await login(page, loginId, loginPw);
 
   if (result.needs2FA) {
+    if (isHeadless) {
+      throw new Needs2FAHeadlessError();
+    }
     console.log("[sync] 2FA required — waiting for user input in browser...");
     await waitFor2FA(page);
   }
@@ -280,34 +312,70 @@ async function scrapePlanNamesPerSet(page: Page): Promise<PlanGroupSetPlanNames[
 
   if (setNames.length === 0) return [];
 
+  // The 5050 page uses a dual-list UI:
+  //   LEFT  (#sectionGroupSelect)  = plans IN the selected plan group set
+  //   RIGHT (#sectionGroupSelect2) = plans NOT in the set
+  // selectPlanGroupSet() fires an AJAX call, and on success:
+  //   1. Removes the response plans from both selects
+  //   2. Moves remaining LEFT options to RIGHT
+  //   3. Sets LEFT.html = AJAX response HTML (the correct plans)
+  // So we must read LEFT, not RIGHT.
+  const planSelectLeft = "select#sectionGroupSelect";
+
   const results: PlanGroupSetPlanNames[] = [];
 
   for (let i = 0; i < setNames.length; i++) {
     const setName = setNames[i];
     console.log(`[sync] Clicking plan group set [${i + 1}/${setNames.length}]: ${setName}`);
 
-    // Re-query links each time since page reloads after click
+    // Re-query links each time (page DOM may have changed after AJAX)
     const links = await page.$$(setSelector);
     if (i >= links.length) {
       console.log(`[sync]   → Link index ${i} out of bounds (only ${links.length} links), skipping`);
       continue;
     }
 
-    await links[i].click();
+    // Click and wait for the AJAX response. selectPlanGroupSet() calls
+    // PlanGroupSetConfigSelectPlanGroupAction.do via $.ajax(). The jQuery
+    // callback synchronously updates LEFT with the response HTML.
+    // NOTE: page.waitForLoadState("networkidle") does NOT work here because
+    // the page is already loaded — it resolves immediately without waiting
+    // for new XHR requests. We must use waitForResponse() instead.
+    await Promise.all([
+      page.waitForResponse(
+        (resp) => resp.url().includes("PlanGroupSetConfigSelectPlanGroupAction.do"),
+        { timeout: 15000 },
+      ),
+      links[i].click(),
+    ]);
 
-    // Wait for page reload / network activity to settle
-    await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+    // Brief wait to ensure jQuery callback has processed the response
+    // and updated the DOM (LEFT select HTML replacement).
+    await page.waitForTimeout(300);
 
-    // Read plan names from select options (excluding empty/default options)
+    // Read plan names from LEFT select optgroups.
+    // Optgroup label = room type (e.g. "--和室コンド--"), option text = plan name.
+    // Format: "--和室コンド--|【+40%】海外ラック単泊_素泊まり"
     const planNames = await page.$$eval(
-      `${planSelectSelector} option`,
-      (options) =>
-        options
-          .map((opt) => (opt.textContent || "").trim())
-          .filter((name) => name.length > 0),
+      `${planSelectLeft} optgroup`,
+      (optgroups) => {
+        const results: string[] = [];
+        for (const og of optgroups) {
+          const roomType = (og.getAttribute("label") || "").trim();
+          if (!roomType) continue;
+
+          for (const opt of og.querySelectorAll("option")) {
+            const planName = (opt.textContent || "").trim();
+            if (planName) {
+              results.push(`${roomType}|${planName}`);
+            }
+          }
+        }
+        return results;
+      },
     );
 
-    console.log(`[sync]   → ${planNames.length} plans: ${planNames.slice(0, 3).join(", ")}${planNames.length > 3 ? "..." : ""}`);
+    console.log(`[sync]   → ${planNames.length} plan entries: ${planNames.slice(0, 3).join(", ")}${planNames.length > 3 ? "..." : ""}`);
     results.push({ planGroupSetName: setName, names: planNames });
   }
 

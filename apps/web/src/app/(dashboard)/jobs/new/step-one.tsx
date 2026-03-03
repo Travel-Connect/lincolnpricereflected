@@ -34,7 +34,7 @@ interface Props {
 }
 
 export function StepOneScreen({ state, setState }: Props) {
-  const { facilities } = useApp();
+  const { facilities, runners } = useApp();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [lincolnCalendars, setLincolnCalendars] = useState<string[]>([]);
   const [loadingCalendars, setLoadingCalendars] = useState(false);
@@ -62,7 +62,8 @@ export function StepOneScreen({ state, setState }: Props) {
       .then((cals) => {
         if (!cancelled) setLincolnCalendars(cals);
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-one] Failed to fetch facility calendars:", err);
         if (!cancelled) setLincolnCalendars([]);
       })
       .finally(() => {
@@ -86,23 +87,29 @@ export function StepOneScreen({ state, setState }: Props) {
       return;
     }
     let cancelled = false;
-    loadPatterns(state.facility.id)
+    const facilityId = state.facility.id;
+    loadPatterns(facilityId)
       .then(({ calendarPatterns }) => {
-        if (!cancelled) {
-          setSavedPatterns(calendarPatterns as CalendarPattern[]);
-          // Auto-select default pattern
-          const def = (calendarPatterns as CalendarPattern[]).find((p) => p.is_default);
-          if (def) {
-            setSelectedPatternId(def.id);
-            setPatternName(def.name);
-            setState((s) => ({ ...s, calendarMappings: def.mappings }));
-          } else {
-            setSelectedPatternId("");
-            setPatternName("");
-          }
+        if (cancelled) return;
+        const patterns = calendarPatterns as CalendarPattern[];
+        setSavedPatterns(patterns);
+
+        // Auto-select: last used (localStorage) > is_default > none
+        const lastUsedId = localStorage.getItem(`lincoln_last_pattern_${facilityId}`);
+        const lastUsed = lastUsedId ? patterns.find((p) => p.id === lastUsedId) : null;
+        const target = lastUsed ?? patterns.find((p) => p.is_default) ?? null;
+
+        if (target) {
+          setSelectedPatternId(target.id);
+          setPatternName(target.name);
+          setState((s) => ({ ...s, calendarMappings: target.mappings }));
+        } else {
+          setSelectedPatternId("");
+          setPatternName("");
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        console.error("[step-one] Failed to load patterns:", err);
         if (!cancelled) setSavedPatterns([]);
       });
     return () => { cancelled = true; };
@@ -127,9 +134,13 @@ export function StepOneScreen({ state, setState }: Props) {
       if (pattern) {
         setPatternName(pattern.name);
         setState((s) => ({ ...s, calendarMappings: pattern.mappings }));
+        // Remember last used pattern per facility
+        if (state.facility) {
+          localStorage.setItem(`lincoln_last_pattern_${state.facility.id}`, patternId);
+        }
       }
     },
-    [savedPatterns, setState],
+    [savedPatterns, setState, state.facility],
   );
 
   /** Save current mappings as a pattern */
@@ -143,7 +154,7 @@ export function StepOneScreen({ state, setState }: Props) {
 
     setSavingPattern(true);
     try {
-      await saveCalendarPattern({
+      const saved = await saveCalendarPattern({
         facility_id: state.facility.id,
         name: patternName.trim(),
         is_default: false,
@@ -151,8 +162,14 @@ export function StepOneScreen({ state, setState }: Props) {
         ...(isUpdate ? { id: selectedPatternId } : {}),
       });
       await refreshPatterns();
-    } catch {
-      // Error handling — could add toast here
+      // Remember as last used pattern
+      const savedId = saved?.id ?? selectedPatternId;
+      if (savedId) {
+        localStorage.setItem(`lincoln_last_pattern_${state.facility.id}`, savedId);
+        setSelectedPatternId(savedId);
+      }
+    } catch (err) {
+      console.error("[step-one] Pattern save error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -167,8 +184,8 @@ export function StepOneScreen({ state, setState }: Props) {
       setSelectedPatternId("");
       setPatternName("");
       await refreshPatterns();
-    } catch {
-      // Error handling
+    } catch (err) {
+      console.error("[step-one] Pattern delete error:", err);
     } finally {
       setSavingPattern(false);
     }
@@ -181,7 +198,7 @@ export function StepOneScreen({ state, setState }: Props) {
     setSyncError(null);
 
     try {
-      const { id: reqId } = await requestCalendarSync(state.facility.id);
+      const { id: reqId } = await requestCalendarSync(state.facility.id, state.targetMachine);
 
       // Poll for completion every 3 seconds
       const facilityId = state.facility.id;
@@ -204,8 +221,8 @@ export function StepOneScreen({ state, setState }: Props) {
             setSyncError(result.error_message || "同期に失敗しました");
           }
           // PENDING/RUNNING — keep polling
-        } catch {
-          // Ignore transient errors during polling
+        } catch (err) {
+          console.error("[step-one] Sync poll error (transient):", err);
         }
       }, 3000);
     } catch (err) {
@@ -242,7 +259,8 @@ export function StepOneScreen({ state, setState }: Props) {
             lincoln_calendar_id: "",
           })),
         }));
-      } catch {
+      } catch (err) {
+        console.error("[step-one] Excel parse error:", err);
         setState((s) => ({
           ...s,
           file,
@@ -314,6 +332,40 @@ export function StepOneScreen({ state, setState }: Props) {
             </button>
           ))}
         </div>
+      </section>
+
+      {/* Runner PC */}
+      <section className="rounded-lg border bg-white p-5 space-y-3">
+        <h2 className="text-sm font-semibold text-slate-700">Runner PC</h2>
+        {runners.length === 0 ? (
+          <p className="text-sm text-slate-500">
+            オンラインの Runner がありません。Runner PC を起動してください。
+          </p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {runners.map((runner) => (
+              <button
+                key={runner.id}
+                onClick={() =>
+                  setState((s) => ({
+                    ...s,
+                    targetMachine: runner.machine_name,
+                  }))
+                }
+                className={`rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  state.targetMachine === runner.machine_name
+                    ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                    : "border-slate-200 text-slate-600 hover:border-slate-300"
+                }`}
+              >
+                {state.targetMachine === runner.machine_name && (
+                  <Check className="mb-0.5 mr-1.5 inline size-3.5" />
+                )}
+                {runner.machine_name}
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* File Upload */}
