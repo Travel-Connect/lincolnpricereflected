@@ -164,6 +164,21 @@ async function executeJob(
   console.log(`[runner] Steps to execute: ${steps.join(" → ")}`);
   await writeJobLog(jobId, null, "info", `実行ステップ: ${steps.join(" → ")}`);
 
+  // Log job config details (calendar mappings + process B rows)
+  const jobConfig = getJobConfig(job);
+  if (jobConfig.calendar_mappings && jobConfig.calendar_mappings.length > 0) {
+    console.log(`[runner] カレンダーマッピング (${jobConfig.calendar_mappings.length} 件):`);
+    for (const m of jobConfig.calendar_mappings) {
+      console.log(`[runner]   ${m.lincoln_calendar_id} ← ${m.excel_calendar}`);
+    }
+  }
+  if (jobConfig.process_b_rows && jobConfig.process_b_rows.length > 0) {
+    console.log(`[runner] 処理Bマッピング (${jobConfig.process_b_rows.length} 件):`);
+    for (const r of jobConfig.process_b_rows) {
+      console.log(`[runner]   ${r.copy_source} → ${r.plan_group_set}`);
+    }
+  }
+
   // Launch browser (maximized)
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
 
