@@ -16,7 +16,7 @@ import { resolve } from "path";
 // Load .env from project root (not CWD)
 const PROJECT_ROOT = resolve(import.meta.dirname, "..", "..", "..");
 config({ path: resolve(PROJECT_ROOT, ".env") });
-import { chromium } from "playwright";
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import {
   getJob,
   getNextSteps,
@@ -53,6 +53,14 @@ import { LINCOLN_BASE } from "./constants.js";
 import { setupFileLogger, type FileLogger } from "./file-logger.js";
 
 const POLL_INTERVAL_MS = 5000;
+
+/** Thrown when 2FA is required but browser is in headless mode */
+class Needs2FAHeadlessError extends Error {
+  constructor() {
+    super("2FA required — headless mode cannot handle interactive 2FA");
+    this.name = "Needs2FAHeadlessError";
+  }
+}
 
 /** Parse CLI args */
 interface CliArgs {
@@ -158,18 +166,17 @@ async function executeJob(
 
   // Launch browser (maximized)
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
-  const browser = await chromium.launch({
-    headless,
-    args: ["--start-maximized"],
-  });
-  const contextOptions = hasSavedSession()
-    ? { storageState: getSessionPath() }
-    : {};
-  const context = await browser.newContext({
-    ...contextOptions,
-    viewport: null, // use full window size (maximized)
-  });
-  const page = await context.newPage();
+
+  /** Helper: launch browser + context + page */
+  async function launchBrowser(useHeadless: boolean, withSession: boolean) {
+    const b = await chromium.launch({ headless: useHeadless, args: ["--start-maximized"] });
+    const opts = withSession && hasSavedSession() ? { storageState: getSessionPath() } : {};
+    const c = await b.newContext({ ...opts, viewport: null });
+    const p = await c.newPage();
+    return { browser: b, context: c, page: p };
+  }
+
+  let { browser, context, page } = await launchBrowser(headless, true);
 
   const recorder = new NetworkRecorder();
   recorder.attach(page);
@@ -180,7 +187,25 @@ async function executeJob(
     let didFreshLogin = false;
     if (needsBrowser) {
       const creds = await getCredentials(job);
-      didFreshLogin = await performAuth(page, context, jobId, creds);
+      try {
+        didFreshLogin = await performAuth(page, context, jobId, creds, headless);
+      } catch (err) {
+        if (err instanceof Needs2FAHeadlessError) {
+          // 2FA required in headless — restart browser in headful mode
+          console.log("[runner] 2FA 検出 — ヘッド付きモードで再起動します");
+          await writeJobLog(jobId, null, "info", "2FA 検出 — ヘッド付きモードに切替");
+          recorder.detach(page);
+          await browser.close();
+
+          ({ browser, context, page } = await launchBrowser(false, false));
+          recorder.attach(page);
+
+          // Re-authenticate in headful mode (user can see the 2FA screen)
+          didFreshLogin = await performAuth(page, context, jobId, creds, false);
+        } else {
+          throw err;
+        }
+      }
     }
 
     // If fresh login was performed, ensure STEPA runs (to switch facility)
@@ -285,12 +310,16 @@ async function executeJob(
  * Perform Lincoln authentication.
  * Tries saved session first; falls back to fresh login + 2FA.
  * Returns true if a fresh login was performed (session was not restored).
+ *
+ * @param isHeadless - If true and 2FA is required, throws Needs2FAHeadlessError
+ *   so the caller can restart in headful mode.
  */
 async function performAuth(
-  page: import("playwright").Page,
-  context: import("playwright").BrowserContext,
+  page: Page,
+  context: BrowserContext,
   jobId: string,
   creds: UserCredentials,
+  isHeadless = false,
 ): Promise<boolean> {
   // Try saved session
   if (hasSavedSession()) {
@@ -325,6 +354,10 @@ async function performAuth(
   );
 
   if (result.needs2FA) {
+    if (isHeadless) {
+      // Headless cannot display the 2FA screen — signal caller to restart headful
+      throw new Needs2FAHeadlessError();
+    }
     await updateJobStatus(jobId, "AWAITING_2FA");
     await writeJobLog(
       jobId,
@@ -357,7 +390,7 @@ async function performAuth(
  * Selects the plan group set configured in the job if available.
  */
 async function navigateToVerificationPage(
-  page: import("playwright").Page,
+  page: Page,
   job: Job,
 ): Promise<void> {
   try {
