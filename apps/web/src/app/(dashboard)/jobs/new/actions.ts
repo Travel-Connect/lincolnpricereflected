@@ -240,20 +240,21 @@ export async function deleteProcessBPattern(patternId: string) {
 
 export async function requestCalendarSync(
   facilityId: string,
-  targetMachine?: string,
+  targetMachine: string,
 ): Promise<{ id: string }> {
+  if (!targetMachine) {
+    throw new Error("Runner PC が選択されていません。Step 1 で Runner PC を選択してください。");
+  }
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Unauthorized");
 
-  const row: Record<string, unknown> = { facility_id: facilityId };
-  if (targetMachine) row.target_machine = targetMachine;
-
   const { data, error } = await supabase
     .from("calendar_sync_requests")
-    .insert(row)
+    .insert({ facility_id: facilityId, target_machine: targetMachine })
     .select("id")
     .single();
 

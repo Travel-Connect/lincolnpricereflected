@@ -33,6 +33,13 @@
 
 ## 安全ルール
 
+- **Runner のマシン限定実行（target_machine 厳密マッチ）**
+  - ジョブ（jobs）および同期リクエスト（calendar_sync_requests）は、`target_machine` カラムで実行先PCを指定する
+  - Runner は自身の `COMPUTERNAME` と完全一致するレコードのみ取得すること（`target_machine IS NULL` は取得しない）
+  - これにより、意図しないPCでのジョブ実行（横取り）を防止する
+  - Web UI でジョブ/同期リクエスト作成時は **必ず `target_machine` を設定すること**（NULL のまま作成すると、どのRunnerにも拾われない）
+  - TcPortalRunner（agent.py）側も同様に `target_machine=eq.{COMPUTERNAME}` でフィルタする
+
 - **STEPB（5050 料金ランク一括設定）のプラングループセット**: テスト時は必ず「カレンダーテスト」のみを対象にすること
   - 「〇単泊カレンダー」「□連泊カレンダー」等の本番プラングループセットには**絶対に送信しないこと**
   - 本番プラングループセットへの送信はユーザーが明示的に指示した場合のみ許可

@@ -48,6 +48,14 @@ export async function processNextSyncRequest(): Promise<boolean> {
   }
 }
 
+/** Thrown when 2FA is required but browser is in headless mode */
+class Needs2FAHeadlessError extends Error {
+  constructor() {
+    super("2FA required — headless mode cannot handle interactive 2FA");
+    this.name = "Needs2FAHeadlessError";
+  }
+}
+
 /** Execute a single sync request — scrapes both calendars and plan group sets */
 async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   const { lincoln_id, name: facilityName } = await getFacilityInfo(req.facility_id);
@@ -55,16 +63,32 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
 
   // Launch browser
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
-  const browser = await chromium.launch({ headless });
-  const contextOptions = hasSavedSession()
-    ? { storageState: getSessionPath() }
-    : {};
-  const context = await browser.newContext(contextOptions);
-  const page = await context.newPage();
+
+  async function launchBrowser(useHeadless: boolean, withSession: boolean) {
+    const b = await chromium.launch({ headless: useHeadless });
+    const opts = withSession && hasSavedSession() ? { storageState: getSessionPath() } : {};
+    const c = await b.newContext(opts);
+    const p = await c.newPage();
+    return { browser: b, context: c, page: p };
+  }
+
+  let { browser, context, page } = await launchBrowser(headless, true);
 
   try {
-    // Auth
-    await performSyncAuth(page, context);
+    // Auth — with 2FA headful fallback
+    try {
+      await performSyncAuth(page, context, headless);
+    } catch (err) {
+      if (err instanceof Needs2FAHeadlessError) {
+        console.log("[sync] 2FA 検出 — ヘッド付きモードで再起動します");
+        await browser.close();
+
+        ({ browser, context, page } = await launchBrowser(false, false));
+        await performSyncAuth(page, context, false);
+      } else {
+        throw err;
+      }
+    }
 
     // Switch facility
     await switchToFacility(page, facilityName, lincoln_id);
@@ -102,10 +126,16 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   }
 }
 
-/** Auth for sync — similar to main.ts performAuth but without job logging */
+/**
+ * Auth for sync — similar to main.ts performAuth but without job logging.
+ *
+ * @param isHeadless - If true and 2FA is required, throws Needs2FAHeadlessError
+ *   so the caller can restart in headful mode.
+ */
 async function performSyncAuth(
   page: Page,
   context: BrowserContext,
+  isHeadless = false,
 ): Promise<void> {
   // Try saved session
   if (hasSavedSession()) {
@@ -136,6 +166,9 @@ async function performSyncAuth(
   const result = await login(page, loginId, loginPw);
 
   if (result.needs2FA) {
+    if (isHeadless) {
+      throw new Needs2FAHeadlessError();
+    }
     console.log("[sync] 2FA required — waiting for user input in browser...");
     await waitFor2FA(page);
   }
