@@ -128,12 +128,145 @@ async function isCopySourceReady(
   }
 }
 
+/** Maximum retries for autocomplete when exact match not found */
+const AUTOCOMPLETE_MAX_RETRIES = 3;
+
 /**
- * Set copy source via autocomplete input (3-attempt strategy).
+ * Trigger autocomplete dropdown using a 3-strategy approach.
+ * Returns true if the dropdown appeared, false otherwise.
  *
  * 1. fill() + End key (fast path — triggers jQuery autocomplete via keydown)
  * 2. jQuery autocomplete("search") API (direct widget call)
  * 3. pressSequentially fallback (proven reliable, slowest)
+ */
+async function triggerAutocomplete(
+  page: Page,
+  inputLocator: ReturnType<Page["locator"]>,
+  copyInputSelector: string,
+  typingValue: string,
+  attempt: number,
+): Promise<boolean> {
+  // Attempt 1: fill() + End key (fast path)
+  console.log(`[STEPB] [fast] fill("${typingValue}") + press End`);
+  await inputLocator.click();
+  await inputLocator.fill(typingValue);
+
+  const fillVal = await inputLocator.inputValue();
+  console.log(`[STEPB] [fast] Input value after fill: "${fillVal}"`);
+
+  if (fillVal === typingValue) {
+    await inputLocator.press("End");
+    try {
+      await page.waitForSelector(
+        "ul.ui-autocomplete li.ui-menu-item",
+        { state: "visible", timeout: 3000 },
+      );
+      console.log("[STEPB] [fast] Autocomplete appeared via fill + End");
+      return true;
+    } catch {
+      console.log("[STEPB] [fast] No dropdown — trying jQuery API");
+    }
+  }
+
+  // Attempt 2: jQuery autocomplete("search") API
+  const jqResult = await page.evaluate((sel) => {
+    try {
+      const $ = (window as any).jQuery || (window as any).$;
+      if (!$) return "no-jquery";
+      const $el = $(sel);
+      if (!$el.length) return "no-element";
+      if (!$el.data("ui-autocomplete") && !$el.data("autocomplete"))
+        return "no-widget";
+      $el.autocomplete("search", $el.val() as string);
+      return "triggered";
+    } catch (e) {
+      return "error:" + String(e);
+    }
+  }, copyInputSelector);
+  console.log(`[STEPB] [jq] autocomplete search: ${jqResult}`);
+
+  if (jqResult === "triggered") {
+    try {
+      await page.waitForSelector(
+        "ul.ui-autocomplete li.ui-menu-item",
+        { state: "visible", timeout: 3000 },
+      );
+      console.log("[STEPB] [jq] Autocomplete appeared via jQuery API");
+      return true;
+    } catch {
+      console.log("[STEPB] [jq] No dropdown — falling back to typing");
+    }
+  }
+
+  // Attempt 3: pressSequentially fallback (proven reliable)
+  // Use increasing delay on retries to improve headless stability
+  const charDelay = attempt === 0 ? 50 : attempt === 1 ? 80 : 120;
+  console.log(`[STEPB] [fallback] pressSequentially("${typingValue}", delay=${charDelay}ms)`);
+  await inputLocator.click({ clickCount: 3 });
+  await page.waitForTimeout(200);
+  await inputLocator.press("Backspace");
+  await page.waitForTimeout(200);
+  await inputLocator.pressSequentially(typingValue, { delay: charDelay });
+
+  // Wait longer for suggestions to appear in headless mode
+  const waitTime = attempt === 0 ? 8000 : 12000;
+  try {
+    await page.waitForSelector(
+      "ul.ui-autocomplete li.ui-menu-item",
+      { state: "visible", timeout: waitTime },
+    );
+    console.log("[STEPB] [fallback] Autocomplete appeared via typing");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Collect visible autocomplete suggestions and find exact match.
+ * Returns { clicked: true } if exact match was found and clicked,
+ * or { clicked: false, suggestions } if no exact match.
+ */
+async function findAndClickExactMatch(
+  page: Page,
+  copySource: string,
+): Promise<{ clicked: true } | { clicked: false; suggestions: string[] }> {
+  const acItems = page.locator("ul.ui-autocomplete li.ui-menu-item a");
+  const count = await acItems.count();
+
+  // Collect all visible suggestions
+  const suggestions: { index: number; text: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    if (await acItems.nth(i).isVisible()) {
+      const text = (await acItems.nth(i).textContent())?.trim() ?? "";
+      suggestions.push({ index: i, text });
+    }
+  }
+  console.log(
+    `[STEPB] Autocomplete suggestions (${suggestions.length}): ` +
+    suggestions.map((s) => `"${s.text}"`).join(", "),
+  );
+
+  // Exact match (handle half/full-width parentheses)
+  const normalize = (s: string) => s.replace(/[（）]/g, (c) => c === "（" ? "(" : ")");
+  const normalizedSource = normalize(copySource);
+  for (const s of suggestions) {
+    if (s.text === copySource || normalize(s.text) === normalizedSource) {
+      console.log(`[STEPB] Clicking exact match: "${s.text}"`);
+      await acItems.nth(s.index).click();
+      return { clicked: true };
+    }
+  }
+
+  return { clicked: false, suggestions: suggestions.map((s) => s.text) };
+}
+
+/**
+ * Set copy source via autocomplete input with retry.
+ *
+ * Tries up to AUTOCOMPLETE_MAX_RETRIES times to trigger autocomplete and
+ * find an exact match. If no exact match is found after all retries, throws
+ * an error instead of selecting the wrong copy source (safety-critical).
  *
  * After the autocomplete suggestion is clicked, verifies that the hidden
  * fields (#selectPlanGrpName, #selectPlanGrpCd) are properly set.
@@ -152,124 +285,67 @@ async function setCopySourceAutocomplete(
     console.log(`[STEPB] Normalized parentheses: "${copySource}" → "${typingValue}"`);
   }
 
-  let autocompleteAppeared = false;
+  let lastSuggestions: string[] = [];
 
-  // Attempt 1: fill() + End key (fast path)
-  console.log(`[STEPB] [fast] fill("${typingValue}") + press End`);
-  await inputLocator.click();
-  await inputLocator.fill(typingValue);
-
-  const fillVal = await inputLocator.inputValue();
-  console.log(`[STEPB] [fast] Input value after fill: "${fillVal}"`);
-
-  if (fillVal === typingValue) {
-    await inputLocator.press("End");
-    try {
-      await page.waitForSelector(
-        "ul.ui-autocomplete li.ui-menu-item",
-        { state: "visible", timeout: 3000 },
+  for (let attempt = 0; attempt < AUTOCOMPLETE_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      console.log(
+        `[STEPB] Autocomplete retry ${attempt}/${AUTOCOMPLETE_MAX_RETRIES - 1} ` +
+        `for "${copySource}" — clearing input and waiting...`,
       );
-      autocompleteAppeared = true;
-      console.log("[STEPB] [fast] Autocomplete appeared via fill + End");
-    } catch {
-      console.log("[STEPB] [fast] No dropdown — trying jQuery API");
+      // Dismiss any open menu and clear input before retry
+      await inputLocator.press("Escape").catch(() => {});
+      await page.waitForTimeout(500);
+      await inputLocator.click({ clickCount: 3 });
+      await inputLocator.press("Backspace");
+      await page.waitForTimeout(1000 * attempt); // Increasing backoff
     }
-  }
 
-  // Attempt 2: jQuery autocomplete("search") API
-  if (!autocompleteAppeared) {
-    const jqResult = await page.evaluate((sel) => {
-      try {
-        const $ = (window as any).jQuery || (window as any).$;
-        if (!$) return "no-jquery";
-        const $el = $(sel);
-        if (!$el.length) return "no-element";
-        if (!$el.data("ui-autocomplete") && !$el.data("autocomplete"))
-          return "no-widget";
-        $el.autocomplete("search", $el.val() as string);
-        return "triggered";
-      } catch (e) {
-        return "error:" + String(e);
+    const appeared = await triggerAutocomplete(
+      page, inputLocator, copyInputSelector, typingValue, attempt,
+    );
+
+    if (!appeared) {
+      if (attempt < AUTOCOMPLETE_MAX_RETRIES - 1) {
+        console.log(`[STEPB] No suggestions appeared — will retry`);
+        continue;
       }
-    }, copyInputSelector);
-    console.log(`[STEPB] [jq] autocomplete search: ${jqResult}`);
-
-    if (jqResult === "triggered") {
-      try {
-        await page.waitForSelector(
-          "ul.ui-autocomplete li.ui-menu-item",
-          { state: "visible", timeout: 3000 },
-        );
-        autocompleteAppeared = true;
-        console.log("[STEPB] [jq] Autocomplete appeared via jQuery API");
-      } catch {
-        console.log("[STEPB] [jq] No dropdown — falling back to typing");
-      }
-    }
-  }
-
-  // Attempt 3: pressSequentially fallback (proven reliable)
-  if (!autocompleteAppeared) {
-    console.log(`[STEPB] [fallback] pressSequentially("${typingValue}")`);
-    await inputLocator.click({ clickCount: 3 });
-    await page.waitForTimeout(100);
-    await inputLocator.press("Backspace");
-    await page.waitForTimeout(100);
-    await inputLocator.pressSequentially(typingValue, { delay: 50 });
-
-    try {
-      await page.waitForSelector(
-        "ul.ui-autocomplete li.ui-menu-item",
-        { state: "visible", timeout: 8000 },
-      );
-      console.log("[STEPB] [fallback] Autocomplete appeared via typing");
-    } catch {
       throw new Error(
-        `[STEPB] No autocomplete suggestions appeared for "${typingValue}" (config: "${copySource}").`,
+        `[STEPB] No autocomplete suggestions appeared for "${typingValue}" ` +
+        `(config: "${copySource}") after ${AUTOCOMPLETE_MAX_RETRIES} attempts.`,
       );
     }
-  }
 
-  // Click the autocomplete suggestion — prefer exact match over first-visible.
-  // Lincoln lists both "テストカレンダー" and "テストカレンダー（連泊）" for
-  // a search of "テストカレンダー", so we must pick the exact one.
-  const acItems = page.locator("ul.ui-autocomplete li.ui-menu-item a");
-  const count = await acItems.count();
-  let clicked = false;
+    // Try to find and click exact match
+    const result = await findAndClickExactMatch(page, copySource);
 
-  // Collect all visible suggestions
-  const suggestions: { index: number; text: string }[] = [];
-  for (let i = 0; i < count; i++) {
-    if (await acItems.nth(i).isVisible()) {
-      const text = (await acItems.nth(i).textContent())?.trim() ?? "";
-      suggestions.push({ index: i, text });
-    }
-  }
-  console.log(`[STEPB] Autocomplete suggestions (${suggestions.length}): ${suggestions.map((s) => `"${s.text}"`).join(", ")}`);
-
-  // First pass: exact match (handle half/full-width parentheses)
-  const normalize = (s: string) => s.replace(/[（）]/g, (c) => c === "（" ? "(" : ")");
-  const normalizedSource = normalize(copySource);
-  for (const s of suggestions) {
-    if (s.text === copySource || normalize(s.text) === normalizedSource) {
-      console.log(`[STEPB] Clicking exact match: "${s.text}"`);
-      await acItems.nth(s.index).click();
-      clicked = true;
+    if (result.clicked) {
+      // Exact match found and clicked — proceed to verification
+      await page.waitForTimeout(300);
       break;
     }
-  }
 
-  // Fallback: click first visible (shouldn't happen for known calendars)
-  if (!clicked && suggestions.length > 0) {
-    console.warn(`[STEPB] No exact match for "${copySource}" — clicking first: "${suggestions[0].text}"`);
-    await acItems.nth(suggestions[0].index).click();
-    clicked = true;
-  }
+    // No exact match — record what we saw and retry
+    lastSuggestions = result.suggestions;
 
-  if (!clicked) {
-    throw new Error("[STEPB] No visible autocomplete suggestion to click");
+    if (attempt < AUTOCOMPLETE_MAX_RETRIES - 1) {
+      console.log(
+        `[STEPB] No exact match for "${copySource}" — will retry ` +
+        `(got: ${lastSuggestions.map((s) => `"${s}"`).join(", ")})`,
+      );
+      // Close the menu before retrying
+      await inputLocator.press("Escape").catch(() => {});
+      await page.waitForTimeout(500);
+      continue;
+    }
+
+    // All retries exhausted — throw error (NEVER select wrong copy source)
+    throw new Error(
+      `[STEPB] No exact match for "${copySource}" after ${AUTOCOMPLETE_MAX_RETRIES} attempts. ` +
+      `Suggestions were: ${lastSuggestions.map((s) => `"${s}"`).join(", ")}. ` +
+      `Refusing to select wrong copy source — aborting to prevent incorrect data submission.`,
+    );
   }
-  await page.waitForTimeout(300);
 
   // Verify hidden fields are set (doCopy requires them)
   const selectVal = await page.evaluate(() => {

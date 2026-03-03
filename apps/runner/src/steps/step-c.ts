@@ -226,8 +226,32 @@ export async function run(
 
   console.log("\n[STEPC] === 突合検証開始 ===");
 
+  // Build stay type overrides from process_b_rows copy_source.
+  // The copy source name (e.g. "テストカレンダー（連泊）") indicates the stay type
+  // more reliably than the plan group name in the output xlsx (e.g. "カレンダーテスト"
+  // which contains no stay type keyword).
+  const processBRows = config.process_b_rows;
+  let stayTypeOverrides: Map<string, "単泊" | "連泊"> | undefined;
+  if (processBRows && processBRows.length > 0) {
+    stayTypeOverrides = new Map();
+    for (const row of processBRows) {
+      if (row.copy_source && row.plan_group_set) {
+        const stayType = row.copy_source.includes("連泊") ? "連泊" : "単泊";
+        stayTypeOverrides.set(row.plan_group_set, stayType);
+      }
+    }
+    if (stayTypeOverrides.size > 0) {
+      console.log(
+        `[STEPC] Stay type overrides from copy source: ` +
+        [...stayTypeOverrides.entries()].map(([k, v]) => `${k}→${v}`).join(", "),
+      );
+    } else {
+      stayTypeOverrides = undefined;
+    }
+  }
+
   // Parse the output xlsx
-  const parsed = parseOutputXlsx(savedPath, options?.roomTypeMapping);
+  const parsed = parseOutputXlsx(savedPath, options?.roomTypeMapping, stayTypeOverrides);
 
   // Load expected ranks from Supabase
   const { rankMap: expectedRankMap } = await loadExpectedRanks(jobId);
@@ -236,8 +260,6 @@ export async function run(
   // process_b_rows plan_name format: "--和室コンド--|カレンダーテスト"
   // Extract room type group: strip "--" markers → "和室コンド"
   // Then match against output xlsx planBlock.roomTypeGroup to find mapped room types.
-  const processBRows = config.process_b_rows;
-
   let verifyRoomTypes: string[] | undefined;
   if (processBRows && processBRows.length > 0) {
     const targetGroups = new Set<string>();
