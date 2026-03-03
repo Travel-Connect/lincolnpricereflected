@@ -131,18 +131,34 @@ async function processOneCalendar(
   const listItemSelector = getSelector("step0.calendarListItem");
 
   console.log(`[STEP0] Looking for: ${calendarName}`);
-  const calendarLink = page
-    .locator(listItemSelector)
-    .filter({ hasText: calendarName })
-    .first();
 
-  if (!(await calendarLink.isVisible({ timeout: 10000 }).catch(() => false))) {
+  // Find exact calendar name match (hasText is substring — "テストカレンダー"
+  // would also match "テストカレンダー（連泊）"). Iterate and compare trimmed text.
+  const allItems = page.locator(listItemSelector);
+  await allItems.first().waitFor({ state: "visible", timeout: 10000 });
+  const itemCount = await allItems.count();
+  let matchIndex = -1;
+  for (let i = 0; i < itemCount; i++) {
+    const text = ((await allItems.nth(i).textContent()) ?? "").trim();
+    if (text === calendarName) {
+      matchIndex = i;
+      break;
+    }
+  }
+
+  if (matchIndex === -1) {
+    // Log available names for debugging
+    const available: string[] = [];
+    for (let i = 0; i < itemCount; i++) {
+      available.push(((await allItems.nth(i).textContent()) ?? "").trim());
+    }
     throw new Error(
-      `[STEP0] Calendar "${calendarName}" not found in list`,
+      `[STEP0] Calendar "${calendarName}" not found (exact match). Available: ${available.join(", ")}`,
     );
   }
 
-  console.log(`[STEP0] Found "${calendarName}" — clicking...`);
+  const calendarLink = allItems.nth(matchIndex);
+  console.log(`[STEP0] Found "${calendarName}" (exact match, index ${matchIndex}) — clicking...`);
   await Promise.all([
     page.waitForLoadState("networkidle", { timeout: 15000 }),
     calendarLink.click(),

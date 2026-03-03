@@ -550,20 +550,31 @@ export async function run(
 
       console.log(`[STEPB] On month: ${monthLabel}`);
 
-      // 5b. Select the plan group set
+      // 5b. Select the plan group set (exact match to avoid substring collisions)
       console.log(`[STEPB] --- Plan group set: ${planGroupSet} ---`);
-      const setItem = page
-        .locator(planGroupSetSelector)
-        .filter({ hasText: planGroupSet })
-        .first();
+      const allSetItems = page.locator(planGroupSetSelector);
+      await allSetItems.first().waitFor({ state: "visible", timeout: 5000 });
+      const setCount = await allSetItems.count();
+      let setMatchIndex = -1;
+      for (let si = 0; si < setCount; si++) {
+        const txt = ((await allSetItems.nth(si).textContent()) ?? "").trim();
+        if (txt === planGroupSet) {
+          setMatchIndex = si;
+          break;
+        }
+      }
 
-      if (!(await setItem.isVisible({ timeout: 5000 }).catch(() => false))) {
+      if (setMatchIndex === -1) {
+        const available: string[] = [];
+        for (let si = 0; si < setCount; si++) {
+          available.push(((await allSetItems.nth(si).textContent()) ?? "").trim());
+        }
         throw new Error(
-          `[STEPB] Plan group set "${planGroupSet}" not found on 5050 page`,
+          `[STEPB] Plan group set "${planGroupSet}" not found (exact match). Available: ${available.join(", ")}`,
         );
       }
 
-      await setItem.click();
+      await allSetItems.nth(setMatchIndex).click();
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await page.waitForTimeout(500);
       console.log(`[STEPB] Plan group set selected: ${planGroupSet}`);
