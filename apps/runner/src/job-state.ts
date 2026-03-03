@@ -187,16 +187,18 @@ export async function recordStepFailure(
  * Uses optimistic locking: only claims if status is still PENDING.
  */
 export async function claimNextJob(targetMachine?: string): Promise<Job | null> {
-  // Find oldest pending job targeted to this machine or any machine
+  // Only claim jobs explicitly targeted to this machine (never claim NULL target)
   const machineName = targetMachine ?? process.env.COMPUTERNAME ?? "";
-  let query = getSupabase()
+  if (!machineName) {
+    console.log("[runner] COMPUTERNAME not set — skipping job claim");
+    return null;
+  }
+
+  const query = getSupabase()
     .from("jobs")
     .select("id")
-    .eq("status", "PENDING");
-
-  if (machineName) {
-    query = query.or(`target_machine.eq.${machineName},target_machine.is.null`);
-  }
+    .eq("status", "PENDING")
+    .eq("target_machine", machineName);
 
   const { data: pending } = await query
     .order("created_at", { ascending: true })
@@ -292,16 +294,17 @@ export interface CalendarSyncRequest {
 /** Claim the next PENDING calendar sync request for this machine */
 export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null> {
   const machineName = process.env.COMPUTERNAME ?? "";
+  if (!machineName) {
+    console.log("[runner] COMPUTERNAME not set — skipping sync claim");
+    return null;
+  }
 
-  // Match requests targeted to this machine OR any machine (target_machine is null)
-  let query = getSupabase()
+  // Only claim requests explicitly targeted to this machine (never claim NULL target)
+  const query = getSupabase()
     .from("calendar_sync_requests")
     .select("id, facility_id, status")
-    .eq("status", "PENDING");
-
-  if (machineName) {
-    query = query.or(`target_machine.eq.${machineName},target_machine.is.null`);
-  }
+    .eq("status", "PENDING")
+    .eq("target_machine", machineName);
 
   const { data: pending } = await query
     .order("created_at", { ascending: true })

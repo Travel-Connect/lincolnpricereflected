@@ -50,6 +50,7 @@ import {
 } from "./auth/index.js";
 import { processNextSyncRequest } from "./sync-calendar.js";
 import { LINCOLN_BASE } from "./constants.js";
+import { setupFileLogger, type FileLogger } from "./file-logger.js";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -133,6 +134,10 @@ async function executeJob(
   keepBrowserOpen = false,
 ): Promise<void> {
   const jobId = job.id;
+
+  // Start file logging to OneDrive shared folder
+  const logger = setupFileLogger(jobId);
+
   console.log(`[runner] Starting job ${jobId}`);
   await writeJobLog(jobId, null, "info", "ジョブ開始");
 
@@ -267,6 +272,7 @@ async function executeJob(
     }
   } finally {
     recorder.detach(page);
+    logger.close();
     if (keepBrowserOpen) {
       console.log(
         "[runner] ブラウザを開いたまま保持中。確認後 Ctrl+C で終了してください。",
@@ -435,6 +441,13 @@ async function pollLoop(keepBrowser: boolean): Promise<void> {
 
 // --- Entry point ---
 async function main(): Promise<void> {
+  const machineName = process.env.COMPUTERNAME;
+  if (!machineName) {
+    console.error("[runner] COMPUTERNAME environment variable is not set. Cannot identify this runner.");
+    process.exit(1);
+  }
+  console.log(`[runner] Machine: ${machineName}`);
+
   const args = parseArgs();
 
   if (args.mode === "poll") {
