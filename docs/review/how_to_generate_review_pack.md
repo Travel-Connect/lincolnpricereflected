@@ -37,7 +37,7 @@ npm run review:pack -- --job-id <uuid>
 | `--include-artifacts <mode>` | `safe` / `all` / `none` | safe |
 
 **Artifacts モード:**
-- `safe` (既定): スクリーンショット(.png)と Excel(.xlsx) のみ。HTML/Network ログは除外。
+- `safe` (既定): スクリーンショット(.png)と Excel(.xlsx) のみ。HTML ダンプ(.html)と Network ログ(.jsonl) は Cookie やヘッダー情報を含む可能性があるため除外。
 - `all`: 全 artifact を含む。**機密注意**の警告ファイルが追加されます。
 - `none`: artifact を含まない。
 
@@ -69,7 +69,7 @@ cd C:\lincolnpricereflected\data\review-packs\<YYYYMMDD-HHMMSS>
 powershell -ExecutionPolicy Bypass -File create-zip.ps1
 ```
 
-ZIP ファイルは `data/review-packs/` 直下に `<YYYYMMDD-HHMMSS>.zip` として出力されます。
+ZIP ファイルは `C:\lincolnpricereflected\data\review-packs\` 直下に `<YYYYMMDD-HHMMSS>.zip` として出力されます。
 
 ## ChatGPT にレビューを依頼する
 
@@ -133,3 +133,9 @@ DB にジョブレコードが存在するか確認。`--latest` は全ジョブ
 
 ツールがパス検証でエラーを出します。`data/review-packs/` は `.gitignore` で
 追跡対象外にしてください。
+
+### `Path validation failed` / `パス検証エラー`
+
+生成スクリプトはすべての出力パスが `C:\lincolnpricereflected` 配下であることを検証します。
+シンボリックリンクやジャンクションにより実体パスがプロジェクト外になる場合、
+このエラーが発生します。出力先ディレクトリのパスを確認してください。

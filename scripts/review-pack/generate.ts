@@ -10,7 +10,7 @@
  */
 
 import { config } from "dotenv";
-import { resolve, join, relative, basename } from "path";
+import { resolve, join, relative, basename, extname } from "path";
 import {
   mkdirSync,
   copyFileSync,
@@ -67,6 +67,7 @@ function parseArgs(): CliArgs {
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
       case "--job-id":
+        if (i + 1 >= args.length) { console.error("--job-id requires a value"); process.exit(1); }
         result.jobId = args[++i];
         break;
       case "--latest":
@@ -75,9 +76,16 @@ function parseArgs(): CliArgs {
       case "--with-ui-screens":
         result.withUiScreens = true;
         break;
-      case "--include-artifacts":
-        result.includeArtifacts = args[++i] as "safe" | "all" | "none";
+      case "--include-artifacts": {
+        if (i + 1 >= args.length) { console.error("--include-artifacts requires a value"); process.exit(1); }
+        const val = args[++i];
+        if (!["safe", "all", "none"].includes(val)) {
+          console.error(`--include-artifacts must be safe|all|none (got: ${val})`);
+          process.exit(1);
+        }
+        result.includeArtifacts = val as "safe" | "all" | "none";
         break;
+      }
       case "--help":
       case "-h":
         printUsage();
@@ -108,7 +116,10 @@ Options:
 // ── Path Safety ────────────────────────────────────────────────
 function assertInsideProject(p: string): void {
   const resolved = resolve(p);
-  if (!resolved.startsWith(PROJECT_ROOT)) {
+  // Windows: case-insensitive NTFS — compare lowercased paths
+  const norm = resolved.toLowerCase();
+  const normRoot = PROJECT_ROOT.toLowerCase();
+  if (!norm.startsWith(normRoot)) {
     throw new Error(
       `[SECURITY] Path is outside project root: ${resolved}\n` +
         `  Project root: ${PROJECT_ROOT}`,
@@ -182,7 +193,8 @@ function getGitInfo(): { branch: string; commit: string; dirty: boolean } {
       encoding: "utf-8",
     }).trim();
     return { branch, commit, dirty: status.length > 0 };
-  } catch {
+  } catch (e) {
+    console.warn(`[review-pack] Git info unavailable: ${e instanceof Error ? e.message : e}`);
     return { branch: "unknown", commit: "unknown", dirty: false };
   }
 }
@@ -206,6 +218,7 @@ function writeManifest(
   const git = getGitInfo();
   const versions = getVersions();
   const manifest = {
+    schema_version: "1",
     generated_at: new Date().toISOString(),
     generator: "scripts/review-pack/generate.ts",
     git,
@@ -242,8 +255,12 @@ function copyDocs(outDir: string, redactions: RedactionTracker): void {
         redactions.add(rel, "機密パターンに一致");
         continue;
       }
-      copyFileSync(src, join(docsDir, basename(rel)));
-      console.log(`[review-pack] docs/${basename(rel)} コピー`);
+      try {
+        copyFileSync(src, join(docsDir, basename(rel)));
+        console.log(`[review-pack] docs/${basename(rel)} コピー`);
+      } catch (e) {
+        redactions.add(rel, `コピー失敗: ${e instanceof Error ? e.message : e}`);
+      }
     }
   }
 
@@ -251,7 +268,7 @@ function copyDocs(outDir: string, redactions: RedactionTracker): void {
   const claudeMdPath = resolve(PROJECT_ROOT, ".claude", "CLAUDE.md");
   if (existsSync(claudeMdPath)) {
     const content = readFileSync(claudeMdPath, "utf-8");
-    if (/service.role|secret|password|token/i.test(content)) {
+    if (/\bservice[_-]?role|\bpassword\b|\bsecret[_-]?key|\bapi[_-]?key/i.test(content)) {
       redactions.add("CLAUDE.md", "機密キーワードを検出");
     } else {
       copyFileSync(claudeMdPath, join(docsDir, "CLAUDE.md"));
@@ -385,20 +402,17 @@ function generateApiEndpoints(sysDir: string): void {
     lines.push("");
     for (const f of actionFiles) {
       lines.push(`- \`${f}\``);
-      // Read and extract exported function names
+      // Read and extract exported function names (named async exports only)
       try {
         const content = readFileSync(
           resolve(PROJECT_ROOT, "apps", "web", "src", f),
           "utf-8",
         );
-        const fns = content.match(
+        const matches = content.matchAll(
           /export\s+async\s+function\s+(\w+)/g,
         );
-        if (fns) {
-          for (const fn of fns) {
-            const name = fn.replace(/export\s+async\s+function\s+/, "");
-            lines.push(`  - \`${name}()\``);
-          }
+        for (const m of matches) {
+          lines.push(`  - \`${m[1]}()\``);
         }
       } catch {}
     }
@@ -434,7 +448,7 @@ function generateDbSchema(sysDir: string): void {
 
   const files = readdirSync(migrationsDir)
     .filter((f) => f.endsWith(".sql"))
-    .sort();
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 
   for (const f of files) {
     // Extract a summary from filename
@@ -496,25 +510,28 @@ async function fetchJobSnapshot(
   let job: Record<string, unknown> | null = null;
 
   if (jobId) {
-    const { data } = await sb.from("jobs").select("*").eq("id", jobId).single();
+    const { data, error } = await sb.from("jobs").select("*").eq("id", jobId).single();
+    if (error) console.warn(`[review-pack] ジョブ取得エラー: ${error.message}`);
     job = data;
   } else {
     // Latest: prefer SUCCESS, fallback to any
-    const { data: successJobs } = await sb
+    const { data: successJobs, error: e1 } = await sb
       .from("jobs")
       .select("*")
       .eq("status", "SUCCESS")
       .order("created_at", { ascending: false })
       .limit(1);
+    if (e1) console.warn(`[review-pack] ジョブ検索エラー: ${e1.message}`);
 
     if (successJobs && successJobs.length > 0) {
       job = successJobs[0];
     } else {
-      const { data: anyJobs } = await sb
+      const { data: anyJobs, error: e2 } = await sb
         .from("jobs")
         .select("*")
         .order("created_at", { ascending: false })
         .limit(1);
+      if (e2) console.warn(`[review-pack] ジョブ検索エラー: ${e2.message}`);
       if (anyJobs && anyJobs.length > 0) {
         job = anyJobs[0];
       }
@@ -564,23 +581,26 @@ async function fetchJobSnapshot(
   if (facilityId) {
     const settings: Record<string, unknown> = {};
 
-    const { data: calPatterns } = await sb
+    const { data: calPatterns, error: e3 } = await sb
       .from("calendar_patterns")
       .select("id,facility_id,calendar_name,excel_calendar,created_at")
       .eq("facility_id", facilityId);
-    settings.calendar_patterns = calPatterns;
+    if (e3) console.warn(`[review-pack] calendar_patterns 取得エラー: ${e3.message}`);
+    settings.calendar_patterns = calPatterns || [];
 
-    const { data: bPatterns } = await sb
+    const { data: bPatterns, error: e4 } = await sb
       .from("process_b_patterns")
       .select("id,facility_id,copy_source,plan_group_set,created_at")
       .eq("facility_id", facilityId);
-    settings.process_b_patterns = bPatterns;
+    if (e4) console.warn(`[review-pack] process_b_patterns 取得エラー: ${e4.message}`);
+    settings.process_b_patterns = bPatterns || [];
 
-    const { data: facility } = await sb
+    const { data: facility, error: e5 } = await sb
       .from("facilities")
       .select("id,lincoln_id,name,active")
       .eq("id", facilityId)
       .single();
+    if (e5) console.warn(`[review-pack] facility 取得エラー: ${e5.message}`);
     settings.facility = facility;
 
     writeFileSync(
@@ -598,8 +618,9 @@ async function fetchJobSnapshot(
 
       const files = readdirSync(artifactSrc);
       for (const f of files) {
-        const ext = f.substring(f.lastIndexOf(".")).toLowerCase();
+        const ext = extname(f).toLowerCase();
         const srcPath = join(artifactSrc, f);
+        assertInsideProject(srcPath);
 
         if (isForbiddenPath(srcPath)) {
           redactions.add(`artifacts/${f}`, "機密パターンに一致");
@@ -689,15 +710,16 @@ function generateReviewContext(
     "```",
   ];
 
-  // List files in outDir
-  function listDir(dir: string, prefix: string): void {
+  // List files in outDir (depth-limited to prevent infinite recursion)
+  function listDir(dir: string, prefix: string, depth = 0): void {
+    if (depth > 20) return;
     const entries = readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
       a.name.localeCompare(b.name),
     );
     for (const entry of entries) {
       if (entry.isDirectory()) {
         lines.push(`${prefix}${entry.name}/`);
-        listDir(join(dir, entry.name), prefix + "  ");
+        listDir(join(dir, entry.name), prefix + "  ", depth + 1);
       } else {
         lines.push(`${prefix}${entry.name}`);
       }
@@ -941,14 +963,15 @@ async function main(): Promise<void> {
       ) {
         try {
           const content = readFileSync(full, "utf-8");
-          if (/eyJhbGciOi/.test(content)) {
-            // JWT pattern
+          // JWT pattern: three base64url segments separated by dots
+          if (/ey[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/.test(content)) {
             console.error(`  [WARN] JWT トークン検出: ${relative(outDir, full)}`);
             securityIssues++;
           }
-          if (/SUPABASE_SERVICE_ROLE_KEY\s*[:=]/.test(content)) {
+          // Supabase key patterns
+          if (/SUPABASE_SERVICE_ROLE_KEY\s*[:=]/.test(content) || /\bsbp_[a-zA-Z0-9]{20,}/.test(content)) {
             console.error(
-              `  [WARN] Service Role Key 参照: ${relative(outDir, full)}`,
+              `  [WARN] Service Role Key / Supabase Key 検出: ${relative(outDir, full)}`,
             );
             securityIssues++;
           }
@@ -975,6 +998,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("[review-pack] エラー:", err);
+  console.error("[review-pack] エラー:", err instanceof Error ? err.message : err);
+  if (err instanceof Error && err.stack) console.error(err.stack);
   process.exit(1);
 });
