@@ -8,7 +8,8 @@
   "scripts": {
     "dev": "npm -w apps/web run dev",
     "build": "npm -w apps/web run build",
-    "lint": "npm -w apps/web run lint"
+    "lint": "npm -w apps/web run lint",
+    "review:pack": "npx tsx scripts/review-pack/generate.ts"
   },
   "optionalDependencies": {
     "@rollup/rollup-win32-x64-msvc": "^4.34.0",

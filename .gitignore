@@ -29,6 +29,9 @@ data/chrome-profile-2/
 # Downloads (runner temp)
 data/downloads/
 
+# Review packs (generated review artifacts)
+data/review-packs/
+
 # IDE
 .vscode/
 .idea/
