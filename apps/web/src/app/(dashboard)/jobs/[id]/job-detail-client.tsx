@@ -25,18 +25,18 @@ import { StatusBadge, ExecModeBadge } from "@/components/status-badge";
 import type { Job, JobStep, JobLog, Artifact } from "@/lib/types/database";
 
 const STEP_LABELS: Record<string, string> = {
-  PARSE: "Excel 解析",
-  STEPA: "施設ID確認",
-  STEP0: "カレンダー反映",
-  STEPB: "一括料金反映",
+  PARSE: "Excel解析",
+  STEPA: "ログイン・施設確認",
+  STEP0: "カレンダーランク反映",
+  STEPB: "一括料金送信",
   STEPC: "出力検証",
 };
 
 const PHASE_GROUPS_FULL = [
-  { label: "ログイン/準備", steps: ["PARSE", "STEPA"] },
-  { label: "処理A", steps: ["STEP0"] },
-  { label: "処理B", steps: ["STEPB"] },
-  { label: "検証", steps: ["STEPC"] },
+  { label: "準備", steps: ["PARSE", "STEPA"] },
+  { label: "カレンダー反映", steps: ["STEP0"] },
+  { label: "一括送信", steps: ["STEPB"] },
+  { label: "出力検証", steps: ["STEPC"] },
 ];
 
 function getVisibleSteps(execMode: string): string[] {

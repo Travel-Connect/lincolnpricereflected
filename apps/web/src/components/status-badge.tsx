@@ -109,9 +109,9 @@ interface ExecModeBadgeProps {
 }
 
 const execModeConfig = {
-  A_only: { label: "A", className: "bg-indigo-100 text-indigo-700 border-indigo-200" },
-  B_only: { label: "B", className: "bg-violet-100 text-violet-700 border-violet-200" },
-  A_and_B: { label: "A+B", className: "bg-slate-100 text-slate-700 border-slate-200" },
+  A_only: { label: "カレ", className: "bg-indigo-100 text-indigo-700 border-indigo-200" },
+  B_only: { label: "一括", className: "bg-violet-100 text-violet-700 border-violet-200" },
+  A_and_B: { label: "全", className: "bg-slate-100 text-slate-700 border-slate-200" },
 };
 
 export function ExecModeBadge({ mode, className }: ExecModeBadgeProps) {

@@ -245,11 +245,11 @@ function RetryTab() {
 }
 
 const stepLabels: Record<string, string> = {
-  PARSE: "PARSE — Excel 解析",
-  STEPA: "STEPA — 施設ID確認",
-  STEP0: "STEP0 — カレンダー反映",
-  STEPB: "STEPB — 一括料金反映",
-  STEPC: "STEPC — 出力検証",
+  PARSE: "Excel解析",
+  STEPA: "ログイン・施設確認",
+  STEP0: "カレンダーランク反映",
+  STEPB: "一括料金送信",
+  STEPC: "出力検証",
 };
 
 // --- Account Tab ---

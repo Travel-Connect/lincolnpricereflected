@@ -110,7 +110,7 @@ export function StepThreeScreen({ state, setState }: Props) {
             <>
               <SummaryRow
                 icon={ListChecks}
-                label="処理B マッピング"
+                label="一括送信マッピング"
                 value={
                   <span className="text-sm text-slate-600">
                     {state.processBRows.filter((r) => r.copy_source).length} 件

@@ -683,17 +683,17 @@ const execModeOptions: {
 }[] = [
   {
     value: "A_and_B",
-    label: "A + B",
-    desc: "カレンダーマッピング + 一括料金反映",
+    label: "全処理",
+    desc: "カレンダーランク反映 + 一括料金送信",
   },
   {
     value: "A_only",
-    label: "A のみ",
-    desc: "カレンダーマッピングのみ（STEP0）",
+    label: "カレンダーのみ",
+    desc: "カレンダーランク反映のみ",
   },
   {
     value: "B_only",
-    label: "B のみ",
-    desc: "一括料金反映のみ（STEPB）",
+    label: "一括送信のみ",
+    desc: "一括料金送信のみ",
   },
 ];

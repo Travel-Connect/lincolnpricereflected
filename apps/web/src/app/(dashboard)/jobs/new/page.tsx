@@ -201,8 +201,8 @@ export default function NewJobPage() {
 }
 
 const screenLabels: Record<string, string> = {
-  process_a: "ファイル・処理A",
-  process_b: "処理B",
+  process_a: "ファイル・カレンダー設定",
+  process_b: "一括送信設定",
   confirm: "確認・実行",
 };
 

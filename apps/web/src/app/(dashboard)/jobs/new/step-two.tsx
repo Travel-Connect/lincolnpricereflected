@@ -288,7 +288,7 @@ export function StepTwoScreen({ state, setState }: Props) {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-sm font-semibold text-slate-700">
-              処理B マッピング
+              一括送信マッピング
             </h2>
             <p className="text-xs text-slate-500 mt-1">
               コピー元カレンダーからプラングループセットへの反映設定を行います。

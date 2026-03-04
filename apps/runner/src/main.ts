@@ -309,7 +309,7 @@ async function executeJob(
   } finally {
     recorder.detach(page);
     logger.close();
-    if (keepBrowserOpen) {
+    if (keepBrowserOpen && !headless) {
       console.log(
         "[runner] ブラウザを開いたまま保持中。確認後 Ctrl+C で終了してください。",
       );
