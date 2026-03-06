@@ -254,7 +254,7 @@ export async function requestCalendarSync(
 
   const { data, error } = await supabase
     .from("calendar_sync_requests")
-    .insert({ facility_id: facilityId, target_machine: targetMachine })
+    .insert({ facility_id: facilityId, target_machine: targetMachine, user_id: user.id })
     .select("id")
     .single();
 

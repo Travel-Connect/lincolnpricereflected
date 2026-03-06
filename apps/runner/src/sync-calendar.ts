@@ -16,6 +16,7 @@ import {
   claimNextSyncRequest,
   completeSyncRequest,
   failSyncRequest,
+  getUserCredentials,
   type CalendarSyncRequest,
 } from "./job-state.js";
 import { getFacilityInfo } from "./facility-lookup.js";
@@ -61,6 +62,10 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   const { lincoln_id, name: facilityName } = await getFacilityInfo(req.facility_id);
   console.log(`[sync] Target facility: ${facilityName} (${lincoln_id})`);
 
+  // Resolve credentials — per-user if user_id is set, otherwise env vars
+  const creds = await getSyncCredentials(req.user_id);
+  console.log(`[sync] Using credentials for: ${creds.lincoln_login_id}`);
+
   // Launch browser
   const headless = process.env.PLAYWRIGHT_HEADLESS === "true";
 
@@ -77,14 +82,14 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   try {
     // Auth — with 2FA headful fallback
     try {
-      await performSyncAuth(page, context, headless);
+      await performSyncAuth(page, context, headless, creds);
     } catch (err) {
       if (err instanceof Needs2FAHeadlessError) {
         console.log("[sync] 2FA 検出 — ヘッド付きモードで再起動します");
         await browser.close();
 
         ({ browser, context, page } = await launchBrowser(false, false));
-        await performSyncAuth(page, context, false);
+        await performSyncAuth(page, context, false, creds);
       } else {
         throw err;
       }
@@ -126,6 +131,25 @@ async function executeSyncRequest(req: CalendarSyncRequest): Promise<void> {
   }
 }
 
+interface SyncCredentials {
+  lincoln_login_id: string;
+  lincoln_login_pw: string;
+}
+
+/** Resolve credentials — per-user from DB if user_id is set, otherwise env vars */
+async function getSyncCredentials(userId: string | null): Promise<SyncCredentials> {
+  if (userId) {
+    return await getUserCredentials(userId);
+  }
+
+  const loginId = process.env.LINCOLN_LOGIN_ID;
+  const loginPw = process.env.LINCOLN_LOGIN_PW;
+  if (!loginId || !loginPw) {
+    throw new Error("Missing LINCOLN_LOGIN_ID/PW env vars and no user_id on sync request");
+  }
+  return { lincoln_login_id: loginId, lincoln_login_pw: loginPw };
+}
+
 /**
  * Auth for sync — similar to main.ts performAuth but without job logging.
  *
@@ -136,6 +160,7 @@ async function performSyncAuth(
   page: Page,
   context: BrowserContext,
   isHeadless = false,
+  creds: SyncCredentials = { lincoln_login_id: "", lincoln_login_pw: "" },
 ): Promise<void> {
   // Try saved session
   if (hasSavedSession()) {
@@ -155,15 +180,9 @@ async function performSyncAuth(
     clearSession();
   }
 
-  // Fresh login using env credentials
-  const loginId = process.env.LINCOLN_LOGIN_ID;
-  const loginPw = process.env.LINCOLN_LOGIN_PW;
-  if (!loginId || !loginPw) {
-    throw new Error("Missing LINCOLN_LOGIN_ID/PW env vars for sync");
-  }
-
+  // Fresh login using resolved credentials
   console.log("[sync] Logging in...");
-  const result = await login(page, loginId, loginPw);
+  const result = await login(page, creds.lincoln_login_id, creds.lincoln_login_pw);
 
   if (result.needs2FA) {
     if (isHeadless) {

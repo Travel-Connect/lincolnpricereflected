@@ -289,6 +289,7 @@ export interface CalendarSyncRequest {
   id: string;
   facility_id: string;
   status: string;
+  user_id: string | null;
 }
 
 /** Claim the next PENDING calendar sync request for this machine */
@@ -302,7 +303,7 @@ export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null
   // Only claim requests explicitly targeted to this machine (never claim NULL target)
   const query = getSupabase()
     .from("calendar_sync_requests")
-    .select("id, facility_id, status")
+    .select("id, facility_id, status, user_id")
     .eq("status", "PENDING")
     .eq("target_machine", machineName);
 
@@ -318,7 +319,7 @@ export async function claimNextSyncRequest(): Promise<CalendarSyncRequest | null
     .update({ status: "RUNNING" })
     .eq("id", reqId)
     .eq("status", "PENDING")
-    .select("id, facility_id, status")
+    .select("id, facility_id, status, user_id")
     .single();
 
   if (error || !data) return null;
