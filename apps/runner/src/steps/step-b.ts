@@ -279,11 +279,10 @@ async function setCopySourceAutocomplete(
   const inputLocator = page.locator(copyInputSelector);
   await inputLocator.waitFor({ state: "visible", timeout: 5000 });
 
-  // Lincoln uses full-width parentheses — normalize before typing
-  const typingValue = toFullWidth(copySource);
-  if (typingValue !== copySource) {
-    console.log(`[STEPB] Normalized parentheses: "${copySource}" → "${typingValue}"`);
-  }
+  // Use original value for autocomplete search — Lincoln's autocomplete
+  // server matches against half-width parentheses (calendar names).
+  // findAndClickExactMatch() handles both half/full-width for result matching.
+  const typingValue = copySource;
 
   let lastSuggestions: string[] = [];
 
@@ -582,13 +581,9 @@ export async function run(
         );
       }
 
-      await Promise.all([
-        page.waitForResponse(
-          (resp) => resp.url().includes("PlanGroupSetConfigSelectPlanGroupAction.do"),
-          { timeout: 15000 },
-        ).catch(() => {}),
-        page.evaluate((id) => (window as any).selectPlanGroupSet(id), dataId),
-      ]);
+      await page.evaluate((id) => (window as any).selectPlanGroupSet(id), dataId);
+      // Wait for AJAX success callback to complete DOM updates + widget re-initialization
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
       await page.waitForTimeout(500);
       console.log(`[STEPB] Plan group set selected: ${planGroupSet} (id=${dataId})`);
 
