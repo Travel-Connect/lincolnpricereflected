@@ -30,6 +30,7 @@ import {
 import { resolve } from "node:path";
 import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { LINCOLN_BASE } from "../constants.js";
+import { getSupabase } from "../supabase-client.js";
 
 /** Options for STEPC verification */
 export interface StepCOptions {
@@ -39,42 +40,93 @@ export interface StepCOptions {
 }
 
 /**
- * Scrape available plans from the 5070 page's right select (sectionTableSelect2)
- * and filter by the plan group set names used in STEPB.
+ * Look up plan names from facility_plan_names DB table for the given plan group sets,
+ * then match them against the 5070 page's available plan list by optgroup label + option text.
  *
- * Option text format: "roomType / planGroupSetName" (e.g. "和室コンド / カレンダーテスト")
- * Option value format: "roomTypeId,planGroupId" (e.g. "6,46")
+ * DB plan_name format: "--ムーンスイート--|【+40%】海外ラック単泊_素泊まり"
+ * 5070 DOM structure:
+ *   <optgroup label="--ムーンスイート--">
+ *     <option value="1,3">【+40%】海外ラック単泊_素泊まり</option>
  */
 async function deriveOutputPlansFromPage(
   page: Page,
+  facilityId: string,
   targetPlanGroupSets: string[],
 ): Promise<OutputPlan[]> {
-  const availableSelect = getSelector("stepC.availablePlanGroupSelect");
+  // 1. Look up plan names from DB for target plan group sets
+  const sb = getSupabase();
+  const { data: dbPlans, error } = await sb
+    .from("facility_plan_names")
+    .select("plan_group_set_name, plan_name")
+    .eq("facility_id", facilityId)
+    .in("plan_group_set_name", targetPlanGroupSets);
 
+  if (error) {
+    throw new Error(`[STEPC] Failed to query facility_plan_names: ${error.message}`);
+  }
+
+  if (!dbPlans || dbPlans.length === 0) {
+    throw new Error(
+      `[STEPC] No plan names found in DB for facility ${facilityId}, plan group sets: ${targetPlanGroupSets.join(", ")}. ` +
+      `Run "リンカーンから取得" first to sync plan data.`,
+    );
+  }
+
+  console.log(`[STEPC] DB plan names for target sets: ${dbPlans.length} entries`);
+
+  // 2. Parse DB plan names: "--roomType--|planName" → {roomType, planName}
+  const targetPlans = dbPlans.map((row: { plan_name: string }) => {
+    const sepIdx = row.plan_name.indexOf("|");
+    if (sepIdx < 0) return { roomType: "", planName: row.plan_name };
+    return {
+      roomType: row.plan_name.slice(0, sepIdx),
+      planName: row.plan_name.slice(sepIdx + 1),
+    };
+  });
+
+  // 3. Scrape 5070 page options with their optgroup labels
+  const availableSelect = getSelector("stepC.availablePlanGroupSelect");
   const allOptions = await page.evaluate((sel) => {
     const select = document.querySelector(sel) as HTMLSelectElement | null;
     if (!select) return [];
-    return Array.from(select.options).map((o) => ({
-      value: o.value,
-      text: o.text.trim(),
-    }));
+    const results: { value: string; text: string; groupLabel: string }[] = [];
+    for (const og of select.querySelectorAll("optgroup")) {
+      const groupLabel = og.getAttribute("label") || "";
+      for (const opt of og.querySelectorAll("option")) {
+        results.push({
+          value: opt.value,
+          text: opt.text.trim(),
+          groupLabel,
+        });
+      }
+    }
+    return results;
   }, availableSelect);
 
   console.log(`[STEPC] Available plans on 5070: ${allOptions.length} total`);
 
-  // Filter: option text must contain one of the target plan group set names after " / "
-  const matched = allOptions.filter((opt) => {
-    const slashIdx = opt.text.lastIndexOf(" / ");
-    if (slashIdx < 0) return false;
-    const planGroupSetName = opt.text.slice(slashIdx + 3);
-    return targetPlanGroupSets.includes(planGroupSetName);
-  });
+  // 4. Match: DB {roomType, planName} ↔ 5070 {groupLabel, text}
+  const matched = allOptions.filter((opt) =>
+    targetPlans.some(
+      (tp: { roomType: string; planName: string }) =>
+        tp.roomType === opt.groupLabel && tp.planName === opt.text,
+    ),
+  );
 
   console.log(
     `[STEPC] Matched ${matched.length} plans for plan group sets: ${targetPlanGroupSets.join(", ")}`,
   );
+  for (const m of matched.slice(0, 5)) {
+    console.log(`[STEPC]   ${m.groupLabel} > ${m.text} (${m.value})`);
+  }
+  if (matched.length > 5) {
+    console.log(`[STEPC]   ... and ${matched.length - 5} more`);
+  }
 
-  return matched.map((opt) => ({ value: opt.value, label: opt.text }));
+  return matched.map((opt) => ({
+    value: opt.value,
+    label: `${opt.groupLabel} > ${opt.text}`,
+  }));
 }
 
 /**
@@ -86,6 +138,7 @@ async function deriveOutputPlansFromPage(
  */
 async function resolveOutputPlans(
   page: Page,
+  facilityId: string,
   config: ReturnType<typeof getJobConfig>,
   options?: StepCOptions,
 ): Promise<OutputPlan[]> {
@@ -116,7 +169,7 @@ async function resolveOutputPlans(
   }
 
   console.log(`[STEPC] Plan source: dynamic (from process_b_rows plan group sets: ${targetSets.join(", ")})`);
-  const plans = await deriveOutputPlansFromPage(page, targetSets);
+  const plans = await deriveOutputPlansFromPage(page, facilityId, targetSets);
 
   if (plans.length === 0) {
     throw new Error(
@@ -180,7 +233,7 @@ export async function run(
 
   // 5. Resolve output plans: config_json > options > dynamic derivation from page
   // Must happen AFTER search, because the available plan list is populated by search results.
-  const plans = await resolveOutputPlans(page, config, options);
+  const plans = await resolveOutputPlans(page, job.facility_id, config, options);
 
   // 6. Select plans from dual-list
   // Right select (available plans) → select target options → click move-left button
@@ -192,24 +245,28 @@ export async function run(
     console.log(`  - ${plan.label} (${plan.value})`);
   }
 
-  // Deselect all options first via page.evaluate
-  await page.evaluate((sel) => {
-    const select = document.querySelector(sel) as HTMLSelectElement | null;
-    if (select) {
-      for (const opt of select.options) {
-        opt.selected = false;
-      }
-    }
-  }, availableSelectSel);
-
-  // Select only target plans
+  // Select target plans via jQuery (Lincoln uses jQuery for event binding)
   const planValues = plans.map((p: OutputPlan) => p.value);
-  await page.locator(availableSelectSel).selectOption(planValues);
+  await page.evaluate(
+    ({ sel, values }) => {
+      const $ = (window as any).$;
+      // Deselect all, then select only target plans by value
+      $(`${sel} option`).prop("selected", false);
+      for (const val of values) {
+        $(`${sel} option[value="${val}"]`).prop("selected", true);
+      }
+    },
+    { sel: availableSelectSel, values: planValues },
+  );
   await page.waitForTimeout(500);
 
-  // Click move-to-output button (← button)
+  // Click move-to-output button (← button) via jQuery trigger
+  // Lincoln binds click handlers via jQuery .on() — vanilla click() doesn't fire them.
   console.log("[STEPC] Moving selected plans to output...");
-  await page.locator(moveToOutputBtn).click();
+  await page.evaluate((btnSel) => {
+    const $ = (window as any).$;
+    $(btnSel).trigger("click");
+  }, moveToOutputBtn);
   await page.waitForTimeout(1000);
 
   // Verify plans moved to output select
