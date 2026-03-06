@@ -282,28 +282,62 @@ async function scrapeCalendarNames(page: Page): Promise<string[]> {
   return names;
 }
 
-/** Scrape plan group set names from the 5050 page */
+/**
+ * Scrape plan group set names from the 5050 page via popup.
+ *
+ * The 5050 page only shows up to 3 plan group sets as direct links.
+ * For 4+ sets, we must open the "プラングループセットの保存・呼出" popup
+ * which contains the full list in #cPlanGroupSetWindow_groupset_list.
+ *
+ * Returns: Array of { name, dataId } for each plan group set.
+ */
+interface PlanGroupSetInfo {
+  name: string;
+  dataId: string;
+}
+
 async function scrapePlanGroupSetNames(page: Page): Promise<string[]> {
-  const setSelector = getSelector("stepB.planGroupSetItem");
+  const sets = await scrapePlanGroupSetInfoFromPopup(page);
+  return sets.map((s) => s.name);
+}
 
-  // Plan group sets may not exist if the page structure differs
-  const hasItems = await page
-    .waitForSelector(setSelector, { state: "visible", timeout: 10000 })
-    .then(() => true)
-    .catch(() => false);
+async function scrapePlanGroupSetInfoFromPopup(page: Page): Promise<PlanGroupSetInfo[]> {
+  const popupBtnSel = getSelector("stepB.planGroupSetPopupBtn");
+  const popupListSel = getSelector("stepB.planGroupSetPopupList");
 
-  if (!hasItems) {
-    console.log("[sync] No plan group sets found on 5050 page");
-    return [];
+  // Click popup button to open the plan group set list
+  const popupBtn = page.locator(popupBtnSel);
+  const hasBtnVisible = await popupBtn.isVisible().catch(() => false);
+  if (!hasBtnVisible) {
+    console.log("[sync] Popup button not visible — falling back to direct links");
+    // Fallback to direct links for facilities with <= 3 sets
+    const directSel = getSelector("stepB.planGroupSetItem");
+    const names = await page.$$eval(directSel, (links) =>
+      links
+        .map((a) => ({ name: (a.textContent || "").trim(), dataId: "" }))
+        .filter((x) => x.name.length > 0),
+    );
+    return names;
   }
 
-  const names = await page.$$eval(setSelector, (links) =>
-    links
-      .map((a) => (a.textContent || "").trim())
-      .filter((name) => name.length > 0),
+  await popupBtn.click();
+  await page.waitForTimeout(500);
+
+  // Read all items from popup list
+  const items = await page.$$eval(popupListSel, (lis) =>
+    lis.map((li) => ({
+      name: (li.querySelector("a")?.textContent || "").trim(),
+      dataId: li.getAttribute("data-id") || "",
+    })).filter((x) => x.name.length > 0),
   );
 
-  return names;
+  console.log(`[sync] Popup list: ${items.length} plan group sets`);
+
+  // Close popup by clicking the button again (toggle)
+  await popupBtn.click().catch(() => {});
+  await page.waitForTimeout(300);
+
+  return items;
 }
 
 export interface PlanGroupSetPlanNames {
@@ -313,63 +347,36 @@ export interface PlanGroupSetPlanNames {
 
 /**
  * Scrape plan names per plan group set from the 5050 page.
- * Clicks each plan group set link and reads plan names from select#sectionGroupSelect2.
  *
- * NOTE: selectPlanGroupSet() triggers a page reload, so element references
- * become stale after each click. We must re-query elements each iteration.
+ * Uses selectPlanGroupSet(data-id) JS call for each set, then reads
+ * plan names from LEFT select (select#sectionGroupSelect).
+ *
+ * The popup provides data-id for all sets (including 4+ that aren't
+ * visible as direct links). selectPlanGroupSet() fires an AJAX call
+ * and populates the LEFT select with plans for that set.
  */
 async function scrapePlanNamesPerSet(page: Page): Promise<PlanGroupSetPlanNames[]> {
-  const setSelector = getSelector("stepB.planGroupSetItem");
-  const planSelectSelector = getSelector("stepB.planGroupSelect");
+  // Get all plan group sets with data-id from popup
+  const sets = await scrapePlanGroupSetInfoFromPopup(page);
 
-  // First, collect all set names (before any clicks cause reloads)
-  const setNames = await page.$$eval(setSelector, (links) =>
-    links
-      .map((a) => (a.textContent || "").trim())
-      .filter((name) => name.length > 0),
-  );
+  if (sets.length === 0) return [];
 
-  if (setNames.length === 0) return [];
-
-  // The 5050 page uses a dual-list UI:
-  //   LEFT  (#sectionGroupSelect)  = plans IN the selected plan group set
-  //   RIGHT (#sectionGroupSelect2) = plans NOT in the set
-  // selectPlanGroupSet() fires an AJAX call, and on success:
-  //   1. Removes the response plans from both selects
-  //   2. Moves remaining LEFT options to RIGHT
-  //   3. Sets LEFT.html = AJAX response HTML (the correct plans)
-  // So we must read LEFT, not RIGHT.
-  const planSelectLeft = "select#sectionGroupSelect";
-
+  const planSelectLeft = getSelector("stepB.planGroupSelectLeft");
   const results: PlanGroupSetPlanNames[] = [];
 
-  for (let i = 0; i < setNames.length; i++) {
-    const setName = setNames[i];
-    console.log(`[sync] Clicking plan group set [${i + 1}/${setNames.length}]: ${setName}`);
+  for (let i = 0; i < sets.length; i++) {
+    const { name: setName, dataId } = sets[i];
+    console.log(`[sync] Selecting plan group set [${i + 1}/${sets.length}]: ${setName} (id=${dataId})`);
 
-    // Re-query links each time (page DOM may have changed after AJAX)
-    const links = await page.$$(setSelector);
-    if (i >= links.length) {
-      console.log(`[sync]   → Link index ${i} out of bounds (only ${links.length} links), skipping`);
-      continue;
-    }
-
-    // Click and wait for the AJAX response. selectPlanGroupSet() calls
-    // PlanGroupSetConfigSelectPlanGroupAction.do via $.ajax(). The jQuery
-    // callback synchronously updates LEFT with the response HTML.
-    // NOTE: page.waitForLoadState("networkidle") does NOT work here because
-    // the page is already loaded — it resolves immediately without waiting
-    // for new XHR requests. We must use waitForResponse() instead.
+    // Call selectPlanGroupSet(dataId) via JS — triggers AJAX to load plans
     await Promise.all([
       page.waitForResponse(
         (resp) => resp.url().includes("PlanGroupSetConfigSelectPlanGroupAction.do"),
         { timeout: 15000 },
       ),
-      links[i].click(),
+      page.evaluate((id) => (window as any).selectPlanGroupSet(id), dataId),
     ]);
 
-    // Brief wait to ensure jQuery callback has processed the response
-    // and updated the DOM (LEFT select HTML replacement).
     await page.waitForTimeout(300);
 
     // Read plan names from LEFT select optgroups.

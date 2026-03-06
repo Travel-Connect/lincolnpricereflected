@@ -453,12 +453,33 @@ export async function run(
   });
 
   // 4. Selectors
-  const planGroupSetSelector = getSelector("stepB.planGroupSetItem");
   const copyInputSelector = getSelector("stepB.autoCompleteInput");
   const copyBtn = getSelector("stepB.copyButton");
   const sendContinueBtn = getSelector("stepB.sendContinueButton");
   const sendCloseBtn = getSelector("stepB.sendCloseButton");
   const monthSelect = getSelector("stepB.monthSelect");
+  const popupBtnSel = getSelector("stepB.planGroupSetPopupBtn");
+  const popupListSel = getSelector("stepB.planGroupSetPopupList");
+
+  // 4b. Build name→dataId map from popup for plan group set selection
+  //     The popup contains ALL sets (direct links only show up to 3).
+  console.log("[STEPB] Reading plan group sets from popup...");
+  await page.locator(popupBtnSel).click();
+  await page.waitForTimeout(500);
+  const planGroupSetMap = new Map<string, string>();
+  const popupItems = await page.$$eval(popupListSel, (lis) =>
+    lis.map((li) => ({
+      name: (li.querySelector("a")?.textContent || "").trim(),
+      dataId: li.getAttribute("data-id") || "",
+    })).filter((x) => x.name.length > 0 && x.dataId.length > 0),
+  );
+  for (const item of popupItems) {
+    planGroupSetMap.set(item.name, item.dataId);
+    console.log(`[STEPB]   Plan group set: "${item.name}" (id=${item.dataId})`);
+  }
+  // Close popup
+  await page.locator(popupBtnSel).click().catch(() => {});
+  await page.waitForTimeout(300);
 
   // Build unique (copySource, planGroupSet) pairs in config order.
   // Outer loop iterates these groups; inner loop iterates months.
@@ -550,34 +571,26 @@ export async function run(
 
       console.log(`[STEPB] On month: ${monthLabel}`);
 
-      // 5b. Select the plan group set (exact match to avoid substring collisions)
+      // 5b. Select the plan group set via selectPlanGroupSet(data-id)
+      //     Uses the popup-derived name→dataId map (supports 4+ sets).
       console.log(`[STEPB] --- Plan group set: ${planGroupSet} ---`);
-      const allSetItems = page.locator(planGroupSetSelector);
-      await allSetItems.first().waitFor({ state: "visible", timeout: 5000 });
-      const setCount = await allSetItems.count();
-      let setMatchIndex = -1;
-      for (let si = 0; si < setCount; si++) {
-        const txt = ((await allSetItems.nth(si).textContent()) ?? "").trim();
-        if (txt === planGroupSet) {
-          setMatchIndex = si;
-          break;
-        }
-      }
-
-      if (setMatchIndex === -1) {
-        const available: string[] = [];
-        for (let si = 0; si < setCount; si++) {
-          available.push(((await allSetItems.nth(si).textContent()) ?? "").trim());
-        }
+      const dataId = planGroupSetMap.get(planGroupSet);
+      if (!dataId) {
         throw new Error(
-          `[STEPB] Plan group set "${planGroupSet}" not found (exact match). Available: ${available.join(", ")}`,
+          `[STEPB] Plan group set "${planGroupSet}" not found. ` +
+          `Available: ${[...planGroupSetMap.keys()].join(", ")}`,
         );
       }
 
-      await allSetItems.nth(setMatchIndex).click();
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
+      await Promise.all([
+        page.waitForResponse(
+          (resp) => resp.url().includes("PlanGroupSetConfigSelectPlanGroupAction.do"),
+          { timeout: 15000 },
+        ).catch(() => {}),
+        page.evaluate((id) => (window as any).selectPlanGroupSet(id), dataId),
+      ]);
       await page.waitForTimeout(500);
-      console.log(`[STEPB] Plan group set selected: ${planGroupSet}`);
+      console.log(`[STEPB] Plan group set selected: ${planGroupSet} (id=${dataId})`);
 
       // 5c. Set copy source (with reuse optimization)
       //     After doCopy() + doSend(true), Lincoln preserves the copy source
