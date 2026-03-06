@@ -39,12 +39,94 @@ export interface StepCOptions {
 }
 
 /**
- * Default plans for 畳の宿 那覇壺屋 カレンダーテスト verification.
+ * Scrape available plans from the 5070 page's right select (sectionTableSelect2)
+ * and filter by the plan group set names used in STEPB.
+ *
+ * Option text format: "roomType / planGroupSetName" (e.g. "和室コンド / カレンダーテスト")
+ * Option value format: "roomTypeId,planGroupId" (e.g. "6,46")
  */
-const DEFAULT_OUTPUT_PLANS: OutputPlan[] = [
-  { value: "6,46", label: "和室コンド / カレンダーテスト" },
-  { value: "5,47", label: "和室コンド ～5名仕様～ / カレンダーテスト" },
-];
+async function deriveOutputPlansFromPage(
+  page: Page,
+  targetPlanGroupSets: string[],
+): Promise<OutputPlan[]> {
+  const availableSelect = getSelector("stepC.availablePlanGroupSelect");
+
+  const allOptions = await page.evaluate((sel) => {
+    const select = document.querySelector(sel) as HTMLSelectElement | null;
+    if (!select) return [];
+    return Array.from(select.options).map((o) => ({
+      value: o.value,
+      text: o.text.trim(),
+    }));
+  }, availableSelect);
+
+  console.log(`[STEPC] Available plans on 5070: ${allOptions.length} total`);
+
+  // Filter: option text must contain one of the target plan group set names after " / "
+  const matched = allOptions.filter((opt) => {
+    const slashIdx = opt.text.lastIndexOf(" / ");
+    if (slashIdx < 0) return false;
+    const planGroupSetName = opt.text.slice(slashIdx + 3);
+    return targetPlanGroupSets.includes(planGroupSetName);
+  });
+
+  console.log(
+    `[STEPC] Matched ${matched.length} plans for plan group sets: ${targetPlanGroupSets.join(", ")}`,
+  );
+
+  return matched.map((opt) => ({ value: opt.value, label: opt.text }));
+}
+
+/**
+ * Resolve output plans for STEPC.
+ * Priority: config_json.output_plans > options.outputPlans > dynamic derivation from 5070 page.
+ *
+ * Dynamic derivation: uses process_b_rows plan group set names to filter
+ * the available plans list on the 5070 page.
+ */
+async function resolveOutputPlans(
+  page: Page,
+  config: ReturnType<typeof getJobConfig>,
+  options?: StepCOptions,
+): Promise<OutputPlan[]> {
+  // 1. Explicit config_json.output_plans (highest priority)
+  if (config.output_plans && config.output_plans.length > 0) {
+    console.log(`[STEPC] Plan source: config_json (${config.output_plans.length} plans)`);
+    return config.output_plans;
+  }
+
+  // 2. Options passed programmatically
+  if (options?.outputPlans && options.outputPlans.length > 0) {
+    console.log(`[STEPC] Plan source: options (${options.outputPlans.length} plans)`);
+    return options.outputPlans;
+  }
+
+  // 3. Dynamic: derive from process_b_rows + 5070 available plan list
+  const processBRows = config.process_b_rows;
+  if (!processBRows || processBRows.length === 0) {
+    throw new Error(
+      "[STEPC] Cannot determine output plans: no output_plans in config_json and no process_b_rows. " +
+      "A_only mode requires explicit output_plans in job config.",
+    );
+  }
+
+  const targetSets = [...new Set(processBRows.map((r) => r.plan_group_set).filter(Boolean))];
+  if (targetSets.length === 0) {
+    throw new Error("[STEPC] process_b_rows has no valid plan_group_set values");
+  }
+
+  console.log(`[STEPC] Plan source: dynamic (from process_b_rows plan group sets: ${targetSets.join(", ")})`);
+  const plans = await deriveOutputPlansFromPage(page, targetSets);
+
+  if (plans.length === 0) {
+    throw new Error(
+      `[STEPC] No matching plans found on 5070 page for plan group sets: ${targetSets.join(", ")}. ` +
+      `Ensure the facility has these plan group sets configured in Lincoln.`,
+    );
+  }
+
+  return plans;
+}
 
 export async function run(
   jobId: string,
@@ -54,11 +136,7 @@ export async function run(
 ): Promise<string> {
   console.log("[STEPC] Output & verification — start");
 
-  // Resolve output plans: config_json > options > defaults
   const config = getJobConfig(job);
-  const configPlans = config.output_plans;
-  const plans = configPlans || options?.outputPlans || DEFAULT_OUTPUT_PLANS;
-  console.log(`[STEPC] Plan source: ${configPlans ? "config_json" : options?.outputPlans ? "options" : "defaults"}`);
 
   // --- Safety: verify facility ID ---
   const expectedId = await getFacilityLincolnId(job.facility_id);
@@ -100,12 +178,15 @@ export async function run(
   await page.waitForTimeout(2000);
   console.log("[STEPC] Search complete");
 
-  // 5. Select plans from dual-list
+  // 5. Resolve output plans: config_json > options > dynamic derivation from page
+  // Must happen AFTER search, because the available plan list is populated by search results.
+  const plans = await resolveOutputPlans(page, config, options);
+
+  // 6. Select plans from dual-list
   // Right select (available plans) → select target options → click move-left button
-  const availableSelect = getSelector("stepC.availablePlanGroupSelect");
+  const availableSelectSel = getSelector("stepC.availablePlanGroupSelect");
   const moveToOutputBtn = getSelector("stepC.moveToOutputButton");
 
-  // First deselect all in right select, then select only target plans
   console.log(`[STEPC] Selecting ${plans.length} plans for output:`);
   for (const plan of plans) {
     console.log(`  - ${plan.label} (${plan.value})`);
@@ -119,11 +200,11 @@ export async function run(
         opt.selected = false;
       }
     }
-  }, availableSelect);
+  }, availableSelectSel);
 
   // Select only target plans
-  const planValues = plans.map((p) => p.value);
-  await page.locator(availableSelect).selectOption(planValues);
+  const planValues = plans.map((p: OutputPlan) => p.value);
+  await page.locator(availableSelectSel).selectOption(planValues);
   await page.waitForTimeout(500);
 
   // Click move-to-output button (← button)
