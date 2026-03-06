@@ -30,7 +30,7 @@ import {
 import { resolve } from "node:path";
 import { copyFileSync, mkdirSync, readFileSync } from "node:fs";
 import { LINCOLN_BASE } from "../constants.js";
-import { getSupabase } from "../supabase-client.js";
+
 
 /** Options for STEPC verification */
 export interface StepCOptions {
@@ -40,51 +40,25 @@ export interface StepCOptions {
 }
 
 /**
- * Look up plan names from facility_plan_names DB table for the given plan group sets,
- * then match them against the 5070 page's available plan list by optgroup label + option text.
+ * Match specific plan names from process_b_rows against the 5070 page's available plan list.
  *
- * DB plan_name format: "--ムーンスイート--|【+40%】海外ラック単泊_素泊まり"
+ * process_b_rows.plan_name format: "--お部屋おまかせ--|【-10%】事前単泊_素泊まり"
  * 5070 DOM structure:
- *   <optgroup label="--ムーンスイート--">
- *     <option value="1,3">【+40%】海外ラック単泊_素泊まり</option>
+ *   <optgroup label="--お部屋おまかせ--">
+ *     <option value="5,49">【-10%】事前単泊_素泊まり</option>
  */
-async function deriveOutputPlansFromPage(
+async function matchPlansOnPage(
   page: Page,
-  facilityId: string,
-  targetPlanGroupSets: string[],
+  planNames: string[],
 ): Promise<OutputPlan[]> {
-  // 1. Look up plan names from DB for target plan group sets
-  const sb = getSupabase();
-  const { data: dbPlans, error } = await sb
-    .from("facility_plan_names")
-    .select("plan_group_set_name, plan_name")
-    .eq("facility_id", facilityId)
-    .in("plan_group_set_name", targetPlanGroupSets);
-
-  if (error) {
-    throw new Error(`[STEPC] Failed to query facility_plan_names: ${error.message}`);
-  }
-
-  if (!dbPlans || dbPlans.length === 0) {
-    throw new Error(
-      `[STEPC] No plan names found in DB for facility ${facilityId}, plan group sets: ${targetPlanGroupSets.join(", ")}. ` +
-      `Run "リンカーンから取得" first to sync plan data.`,
-    );
-  }
-
-  console.log(`[STEPC] DB plan names for target sets: ${dbPlans.length} entries`);
-
-  // 2. Parse DB plan names: "--roomType--|planName" → {roomType, planName}
-  const targetPlans = dbPlans.map((row: { plan_name: string }) => {
-    const sepIdx = row.plan_name.indexOf("|");
-    if (sepIdx < 0) return { roomType: "", planName: row.plan_name };
-    return {
-      roomType: row.plan_name.slice(0, sepIdx),
-      planName: row.plan_name.slice(sepIdx + 1),
-    };
+  // 1. Parse plan names: "--roomType--|planName" → {roomType, planName}
+  const targetPlans = planNames.map((pn) => {
+    const sepIdx = pn.indexOf("|");
+    if (sepIdx < 0) return { roomType: "", planName: pn };
+    return { roomType: pn.slice(0, sepIdx), planName: pn.slice(sepIdx + 1) };
   });
 
-  // 3. Scrape 5070 page options with their optgroup labels
+  // 2. Scrape 5070 page options with their optgroup labels
   const availableSelect = getSelector("stepC.availablePlanGroupSelect");
   const allOptions = await page.evaluate((sel) => {
     const select = document.querySelector(sel) as HTMLSelectElement | null;
@@ -93,11 +67,7 @@ async function deriveOutputPlansFromPage(
     for (const og of select.querySelectorAll("optgroup")) {
       const groupLabel = og.getAttribute("label") || "";
       for (const opt of og.querySelectorAll("option")) {
-        results.push({
-          value: opt.value,
-          text: opt.text.trim(),
-          groupLabel,
-        });
+        results.push({ value: opt.value, text: opt.text.trim(), groupLabel });
       }
     }
     return results;
@@ -105,7 +75,7 @@ async function deriveOutputPlansFromPage(
 
   console.log(`[STEPC] Available plans on 5070: ${allOptions.length} total`);
 
-  // 4. Match: DB {roomType, planName} ↔ 5070 {groupLabel, text}
+  // 3. Exact match: {roomType, planName} ↔ {groupLabel, text}
   const matched = allOptions.filter((opt) =>
     targetPlans.some(
       (tp: { roomType: string; planName: string }) =>
@@ -113,14 +83,9 @@ async function deriveOutputPlansFromPage(
     ),
   );
 
-  console.log(
-    `[STEPC] Matched ${matched.length} plans for plan group sets: ${targetPlanGroupSets.join(", ")}`,
-  );
-  for (const m of matched.slice(0, 5)) {
+  console.log(`[STEPC] Matched ${matched.length}/${planNames.length} plans on 5070 page`);
+  for (const m of matched) {
     console.log(`[STEPC]   ${m.groupLabel} > ${m.text} (${m.value})`);
-  }
-  if (matched.length > 5) {
-    console.log(`[STEPC]   ... and ${matched.length - 5} more`);
   }
 
   return matched.map((opt) => ({
@@ -130,15 +95,63 @@ async function deriveOutputPlansFromPage(
 }
 
 /**
- * Resolve output plans for STEPC.
- * Priority: config_json.output_plans > options.outputPlans > dynamic derivation from 5070 page.
+ * Build room type mapping dynamically from process_b_rows + calendar_mappings chain.
  *
- * Dynamic derivation: uses process_b_rows plan group set names to filter
- * the available plans list on the 5070 page.
+ * Chain: calendar_mappings → process_b_rows → output xlsx room type
+ *   calendar_mappings: excel_calendar="ムーンスイート(単泊)" → lincoln_calendar_id="〇単泊カレンダー"
+ *   process_b_rows:    copy_source="〇単泊カレンダー" → plan_name="--お部屋おまかせ--|..."
+ *   output xlsx:       Col A = "お部屋おまかせ" (from plan's optgroup, stripped of "--")
+ *
+ * Result: { "お部屋おまかせ": "ムーンスイート" }
+ *   + stay type from copy_source → final: "ムーンスイート(単泊)"
+ */
+function buildDynamicRoomTypeMapping(
+  config: ReturnType<typeof getJobConfig>,
+): RoomTypeMapping {
+  const mapping: RoomTypeMapping = {};
+  const calMappings = config.calendar_mappings ?? [];
+  const pbRows = config.process_b_rows ?? [];
+
+  // Build: copy_source → excel_calendar base name
+  // calendar_mappings: { excel_calendar: "ムーンスイート(単泊)", lincoln_calendar_id: "〇単泊カレンダー" }
+  const copySourceToExcelBase = new Map<string, string>();
+  for (const cm of calMappings) {
+    // Strip "(単泊)" or "(連泊)" suffix to get base name
+    const baseName = cm.excel_calendar.replace(/\(単泊\)$|\(連泊\)$/, "");
+    copySourceToExcelBase.set(cm.lincoln_calendar_id, baseName);
+  }
+
+  for (const row of pbRows) {
+    if (!row.plan_name || !row.copy_source) continue;
+
+    // Extract output room type from plan_name: "--お部屋おまかせ--|..." → "お部屋おまかせ"
+    const roomTypePart = row.plan_name.split("|")[0];
+    const outputRoomType = roomTypePart.replace(/^-+/, "").replace(/-+$/, "");
+    if (!outputRoomType) continue;
+
+    // Find Excel base name via copy_source
+    const excelBase = copySourceToExcelBase.get(row.copy_source);
+    if (!excelBase) continue;
+
+    if (!mapping[outputRoomType]) {
+      mapping[outputRoomType] = excelBase;
+    }
+  }
+
+  console.log(
+    `[STEPC] Dynamic room type mapping: ` +
+    Object.entries(mapping).map(([k, v]) => `${k}→${v}`).join(", "),
+  );
+
+  return mapping;
+}
+
+/**
+ * Resolve output plans for STEPC.
+ * Priority: config_json.output_plans > options.outputPlans > dynamic from process_b_rows.plan_name.
  */
 async function resolveOutputPlans(
   page: Page,
-  facilityId: string,
   config: ReturnType<typeof getJobConfig>,
   options?: StepCOptions,
 ): Promise<OutputPlan[]> {
@@ -154,7 +167,7 @@ async function resolveOutputPlans(
     return options.outputPlans;
   }
 
-  // 3. Dynamic: derive from process_b_rows + 5070 available plan list
+  // 3. Dynamic: use specific plan names from process_b_rows
   const processBRows = config.process_b_rows;
   if (!processBRows || processBRows.length === 0) {
     throw new Error(
@@ -163,18 +176,22 @@ async function resolveOutputPlans(
     );
   }
 
-  const targetSets = [...new Set(processBRows.map((r) => r.plan_group_set).filter(Boolean))];
-  if (targetSets.length === 0) {
-    throw new Error("[STEPC] process_b_rows has no valid plan_group_set values");
+  const planNames = [...new Set(processBRows.map((r) => r.plan_name).filter(Boolean))];
+  if (planNames.length === 0) {
+    throw new Error("[STEPC] process_b_rows has no plan_name values");
   }
 
-  console.log(`[STEPC] Plan source: dynamic (from process_b_rows plan group sets: ${targetSets.join(", ")})`);
-  const plans = await deriveOutputPlansFromPage(page, facilityId, targetSets);
+  console.log(`[STEPC] Plan source: process_b_rows plan_name (${planNames.length} plans)`);
+  for (const pn of planNames) {
+    console.log(`[STEPC]   target: ${pn}`);
+  }
+
+  const plans = await matchPlansOnPage(page, planNames);
 
   if (plans.length === 0) {
     throw new Error(
-      `[STEPC] No matching plans found on 5070 page for plan group sets: ${targetSets.join(", ")}. ` +
-      `Ensure the facility has these plan group sets configured in Lincoln.`,
+      `[STEPC] No matching plans found on 5070 page for: ${planNames.join(", ")}. ` +
+      `Check that plan names match the 5070 page exactly.`,
     );
   }
 
@@ -233,7 +250,7 @@ export async function run(
 
   // 5. Resolve output plans: config_json > options > dynamic derivation from page
   // Must happen AFTER search, because the available plan list is populated by search results.
-  const plans = await resolveOutputPlans(page, job.facility_id, config, options);
+  const plans = await resolveOutputPlans(page, config, options);
 
   // 6. Select plans from dual-list
   // Right select (available plans) → select target options → click move-left button
@@ -308,9 +325,24 @@ export async function run(
   }
   await page.waitForTimeout(500);
 
+  // 6b. Close "プラングループセットの新規登録" modal if it appears
+  try {
+    const modalCloseBtn = await page.locator("#cPlanGroupSetRecommendation_closeBtn").elementHandle({ timeout: 2000 });
+    if (modalCloseBtn) {
+      console.log("[STEPC] Closing 'プラングループセットの新規登録' modal");
+      await modalCloseBtn.click();
+      await page.waitForTimeout(500);
+    }
+  } catch {
+    // Modal didn't appear — normal case
+  }
+
   // 7. Click output and wait for download
   console.log("[STEPC] Clicking output (doOutput)...");
   const outputBtn = getSelector("stepC.outputButton");
+
+  // doOutput() triggers window.confirm("出力します。") — must accept or download silently fails
+  page.once("dialog", (d) => d.accept());
 
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 60000 }),
@@ -388,8 +420,9 @@ export async function run(
     }
   }
 
-  // Parse the output xlsx
-  const parsed = parseOutputXlsx(savedPath, options?.roomTypeMapping, stayTypeOverrides);
+  // Parse the output xlsx — use dynamic room type mapping from process_b_rows chain
+  const roomTypeMapping = options?.roomTypeMapping || buildDynamicRoomTypeMapping(config);
+  const parsed = parseOutputXlsx(savedPath, roomTypeMapping, stayTypeOverrides);
 
   // Load expected ranks from Supabase
   const { rankMap: expectedRankMap } = await loadExpectedRanks(jobId);
