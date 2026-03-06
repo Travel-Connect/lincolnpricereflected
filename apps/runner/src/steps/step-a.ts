@@ -185,10 +185,9 @@ async function switchFacility(
     const itemCount = await acItems.count();
     console.log(`[STEPA] Found ${itemCount} autocomplete items`);
 
-    let clicked = false;
     const normalizedName = facilityName.replace(/\u3000/g, " ").trim();
 
-    // Collect all items for matching
+    // Collect all items for logging
     const itemTexts: string[] = [];
     for (let i = 0; i < itemCount; i++) {
       const text = (await acItems.nth(i).textContent()) ?? "";
@@ -196,7 +195,8 @@ async function switchFacility(
       console.log(`[STEPA]   Item ${i}: "${text}"`);
     }
 
-    // Priority 1: exact match (normalized)
+    // Exact match only — wrong facility selection is never acceptable
+    let clicked = false;
     for (let i = 0; i < itemCount; i++) {
       const normalizedText = itemTexts[i].replace(/\u3000/g, " ").trim();
       if (normalizedText === normalizedName) {
@@ -207,56 +207,12 @@ async function switchFacility(
       }
     }
 
-    // Priority 2: item text contains facility name (e.g. "プライベートコンド北谷 ジャーガル" contains target)
     if (!clicked) {
-      for (let i = 0; i < itemCount; i++) {
-        const normalizedText = itemTexts[i].replace(/\u3000/g, " ").trim();
-        if (normalizedText.includes(normalizedName) || normalizedName.includes(normalizedText)) {
-          await acItems.nth(i).click();
-          clicked = true;
-          console.log(`[STEPA] Clicked partial match: "${itemTexts[i]}"`);
-          break;
-        }
-      }
-    }
-
-    if (!clicked && itemCount > 0) {
-      // Click the first item as fallback — but ONLY if there's exactly 1 item
-      if (itemCount === 1) {
-        console.log(`[STEPA] No match — clicking only item: "${itemTexts[0]}"`);
-        await acItems.first().click();
-      } else {
-        console.log(`[STEPA] No match found among ${itemCount} items — trying with more specific search term`);
-        // Try typing more of the name to narrow down autocomplete
-        await input.click({ clickCount: 3 });
-        await input.press("Backspace");
-        const longerTerm = facilityName.substring(0, Math.min(facilityName.length, 8));
-        console.log(`[STEPA] Retyping with longer term: "${longerTerm}"`);
-        await input.pressSequentially(longerTerm, { delay: 100 });
-        await page.waitForTimeout(1500);
-
-        // Try to find matching item again
-        const retryItems = page.locator(autocompleteItemSelector);
-        const retryCount = await retryItems.count();
-        console.log(`[STEPA] After retype: ${retryCount} autocomplete items`);
-
-        for (let i = 0; i < retryCount; i++) {
-          const text = ((await retryItems.nth(i).textContent()) ?? "").replace(/\u3000/g, " ").trim();
-          if (text === normalizedName || text.includes(normalizedName) || normalizedName.includes(text)) {
-            await retryItems.nth(i).click();
-            clicked = true;
-            console.log(`[STEPA] Clicked match after retype: "${text}"`);
-            break;
-          }
-        }
-
-        if (!clicked && retryCount > 0) {
-          // Last resort: click first item
-          const firstText = (await retryItems.first().textContent()) ?? "";
-          console.log(`[STEPA] Still no match — clicking first item: "${firstText}"`);
-          await retryItems.first().click();
-        }
-      }
+      throw new Error(
+        `[STEPA] 施設名「${facilityName}」に完全一致する候補が見つかりません。` +
+        `候補: [${itemTexts.map(t => `"${t}"`).join(", ")}]。` +
+        `DB の施設名とリンカーンの施設名が一致しているか確認してください。`,
+      );
     }
 
     // Wait for navigation/page load after autocomplete selection
