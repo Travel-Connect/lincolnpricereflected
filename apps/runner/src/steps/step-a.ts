@@ -185,20 +185,27 @@ async function switchFacility(
     const itemCount = await acItems.count();
     console.log(`[STEPA] Found ${itemCount} autocomplete items`);
 
-    const normalizedName = facilityName.replace(/\u3000/g, " ").trim();
+    // Normalize all whitespace variants (full-width, NBSP, etc.) to single ASCII space
+    const normalizeWS = (s: string) => s.replace(/[\u3000\u00A0\u2002-\u200B\t]+/g, " ").trim();
+    const normalizedName = normalizeWS(facilityName);
 
     // Collect all items for logging
     const itemTexts: string[] = [];
     for (let i = 0; i < itemCount; i++) {
       const text = (await acItems.nth(i).textContent()) ?? "";
       itemTexts.push(text);
-      console.log(`[STEPA]   Item ${i}: "${text}"`);
+      const hex = [...text].map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join(" ");
+      console.log(`[STEPA]   Item ${i}: "${text}" (hex: ${hex})`);
     }
+
+    // Log target name hex for comparison
+    const nameHex = [...facilityName].map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join(" ");
+    console.log(`[STEPA] Target: "${facilityName}" (hex: ${nameHex})`);
 
     // Exact match only — wrong facility selection is never acceptable
     let clicked = false;
     for (let i = 0; i < itemCount; i++) {
-      const normalizedText = itemTexts[i].replace(/\u3000/g, " ").trim();
+      const normalizedText = normalizeWS(itemTexts[i]);
       if (normalizedText === normalizedName) {
         await acItems.nth(i).click();
         clicked = true;
@@ -210,7 +217,8 @@ async function switchFacility(
     if (!clicked) {
       throw new Error(
         `[STEPA] 施設名「${facilityName}」に完全一致する候補が見つかりません。` +
-        `候補: [${itemTexts.map(t => `"${t}"`).join(", ")}]。` +
+        `候補: [${itemTexts.map(t => `"${normalizeWS(t)}"`).join(", ")}]。` +
+        `正規化後ターゲット: "${normalizedName}"。` +
         `DB の施設名とリンカーンの施設名が一致しているか確認してください。`,
       );
     }
