@@ -371,6 +371,13 @@ async function setCopySourceAutocomplete(
   }
 }
 
+/**
+ * Track completed (group, month) pairs across retries within the same process.
+ * Key format: `${jobId}::${copySource}::${planGroupSet}::${month}`
+ * This allows retries to skip already-sent months, resuming from the failure point.
+ */
+const completedSends = new Set<string>();
+
 export async function run(
   jobId: string,
   page: Page,
@@ -522,9 +529,17 @@ export async function run(
     for (let mi = 0; mi < months.length; mi++) {
       const month = months[mi];
       const isLastMonth = mi === months.length - 1;
-      const isLastSendOverall = isLastGroup && isLastMonth;
       const monthLabel = `${month.substring(0, 4)}年${month.substring(4)}月`;
       const retryKey = `${copySource}::${planGroupSet}::${month}`;
+
+      // Skip already-completed sends (from previous retry within same process)
+      const sendKey = `${jobId}::${copySource}::${planGroupSet}::${month}`;
+      if (completedSends.has(sendKey)) {
+        console.log(
+          `[STEPB] Skipping ${copySource} — ${monthLabel} (already completed in previous attempt)`,
+        );
+        continue;
+      }
 
       console.log(
         `\n[STEPB] ═══ ${copySource} — Month ${mi + 1}/${months.length}: ${monthLabel} ═══`,
@@ -660,6 +675,19 @@ export async function run(
       console.log(`[STEPB] Copy done: ${copySource} → ${planGroupSet}`);
 
       // 5e. Send: doSend(true) for all except the very last send → doSend(false)
+      //     Dynamically check remaining sends (accounting for skipped completions)
+      const hasRemainingSends = (() => {
+        for (let rgi = gi; rgi < copySourceGroups.length; rgi++) {
+          const rg = copySourceGroups[rgi];
+          const startMi = rgi === gi ? mi + 1 : 0;
+          for (let rmi = startMi; rmi < months.length; rmi++) {
+            const rKey = `${jobId}::${rg.copySource}::${rg.planGroupSet}::${months[rmi]}`;
+            if (!completedSends.has(rKey)) return true;
+          }
+        }
+        return false;
+      })();
+      const isLastSendOverall = !hasRemainingSends;
       const sendBtn = isLastSendOverall ? sendCloseBtn : sendContinueBtn;
       const sendLabel = isLastSendOverall ? "送信して閉じる" : "送信して続ける";
       console.log(`[STEPB] Clicking ${sendLabel}...`);
@@ -757,6 +785,7 @@ export async function run(
       }
 
       console.log(`[STEPB] ✓ ${copySource} — ${monthLabel} — done`);
+      completedSends.add(sendKey);
 
       // Inter-send delay: let the server finish processing before next send
       // Prevents MBLK0012 ("別の操作により更新処理中") on the next send
