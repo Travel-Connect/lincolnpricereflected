@@ -445,18 +445,22 @@ export async function run(
   page.on("dialog", dialogHandler);
 
   // 3b. Auto-close popup windows (doSend opens a popup after submission)
-  const popupHandler = async (popup: import("playwright").Page) => {
-    const popupUrl = popup.url();
-    console.log(`[STEPB] Popup opened: ${popupUrl} — closing`);
-    await popup.close().catch(() => {});
-  };
-  page.on("popup", popupHandler);
-  page.context().on("page", async (newPage) => {
+  //     Use context.on("page") only — page.on("popup") fires for the same
+  //     popup causing duplicate close attempts and noisy logs.
+  const closedUrls = new Set<string>();
+  const contextPageHandler = async (newPage: import("playwright").Page) => {
     if (newPage !== page) {
-      console.log(`[STEPB] New page opened: ${newPage.url()} — closing`);
+      const url = newPage.url();
+      if (!closedUrls.has(url)) {
+        closedUrls.add(url);
+        console.log(`[STEPB] Popup opened: ${url} — closing`);
+        // Clear after a short delay so we can detect the same popup re-opening later
+        setTimeout(() => closedUrls.delete(url), 2000);
+      }
       await newPage.close().catch(() => {});
     }
-  });
+  };
+  page.context().on("page", contextPageHandler);
 
   // 4. Selectors
   const copyInputSelector = getSelector("stepB.autoCompleteInput");
@@ -716,18 +720,27 @@ export async function run(
       const sendButton = page.locator(sendBtn);
       await sendButton.waitFor({ state: "visible", timeout: 5000 });
 
-      // Original pattern: click + waitForNetworkIdle concurrently
-      // doSend triggers: confirm → form POST → alert → popup → page settles
+      // doSend flow: confirm → accept → form POST → server processes →
+      //   alert "処理を受け付けました。" → popup (Comsc0040InitAction) → page settles
+      // networkidle resolves immediately because confirm blocks JS (0 pending requests).
+      // Instead of fixed wait, poll for the server-response alert to arrive.
       const sendStartTime = Date.now();
-      await Promise.all([
-        page.waitForLoadState("networkidle", { timeout: 60000 }),
-        sendButton.click(),
-      ]);
-      const networkIdleTime = Date.now();
-      console.log(`[STEPB] networkidle reached in ${networkIdleTime - sendStartTime}ms`);
+      await sendButton.click();
 
-      // Wait for popup/alert cycle to complete
-      await page.waitForTimeout(2000);
+      // Wait for alert dialog (signals server finished processing).
+      // The confirm fires immediately; the alert arrives 1-4s later after POST.
+      const SEND_ALERT_TIMEOUT = 30000;
+      const alertPollStart = Date.now();
+      while (Date.now() - alertPollStart < SEND_ALERT_TIMEOUT) {
+        const postSendDialogs = dialogLog.slice(dialogCountBefore);
+        const hasAlert = postSendDialogs.some((d) => d.includes("alert:"));
+        if (hasAlert) break;
+        await page.waitForTimeout(500);
+      }
+
+      // Extra wait for popup to open and close
+      await page.waitForTimeout(1000);
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
 
       // Log dialogs received during this send
       const newDialogs = dialogLog.slice(dialogCountBefore);
@@ -738,17 +751,15 @@ export async function run(
         console.log(`[STEPB] No dialogs received during send — confirm may not have fired`);
       }
 
-      // Check for errors after send (with retry if context was destroyed by popup)
+      // Check for errors after send
       let sendError: string | null = null;
       try {
         sendError = await checkPageError(page);
       } catch (evalErr) {
-        // Execution context destroyed by late popup/navigation — wait and retry
         const errMsg = evalErr instanceof Error ? evalErr.message : String(evalErr);
         console.log(`[STEPB] Post-send eval failed: ${errMsg}`);
-        await dumpPageState(page, "context-destroyed");
-        console.log(`[STEPB] Waiting 5s then retrying checkPageError...`);
-        await page.waitForTimeout(5000);
+        // Alert arrived but page context may still be settling — wait and retry
+        await page.waitForTimeout(3000);
         await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
         try {
           sendError = await checkPageError(page);
@@ -813,7 +824,7 @@ export async function run(
   }
 
   page.off("dialog", dialogHandler);
-  page.off("popup", popupHandler);
+  page.context().off("page", contextPageHandler);
 
   const totalSends = copySourceGroups.length * months.length;
   console.log(
