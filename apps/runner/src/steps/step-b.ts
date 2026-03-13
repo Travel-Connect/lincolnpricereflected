@@ -573,8 +573,9 @@ export async function run(
         console.log(`[STEPB] Selecting month: ${monthOptionValue}`);
         await monthSelectLocator.selectOption(monthOptionValue);
 
-        // --- Approach: waitForNavigation + waitForSelector (4+2) ---
-        const navStart = Date.now();
+        // waitForNavigation: wait for doDisplay() POST navigation to complete
+        // waitForSelector(attached): verify DOM is rebuilt (hidden input, so "attached" not "visible")
+        // waitForFunction: ensure page JS is initialized before calling selectPlanGroupSet
         await Promise.all([
           page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }),
           page.evaluate(() => {
@@ -583,18 +584,14 @@ export async function run(
             }
           }),
         ]);
-        const navEnd = Date.now();
-        console.log(`[STEPB] [nav] waitForNavigation resolved in ${navEnd - navStart}ms`);
-
-        // Verify DOM is ready — check for a key element on the 5050 page
-        const selectorStart = Date.now();
-        await page.waitForSelector('input[name="displayLincolnInnId"]', { timeout: 10000 });
-        const selectorEnd = Date.now();
-        console.log(`[STEPB] [nav] waitForSelector(displayLincolnInnId) resolved in ${selectorEnd - selectorStart}ms`);
-
-        // Also check that selectPlanGroupSet JS function is available
-        const fnReady = await page.evaluate(() => typeof (window as any).selectPlanGroupSet === "function");
-        console.log(`[STEPB] [nav] selectPlanGroupSet available: ${fnReady} (total: ${Date.now() - navStart}ms)`);
+        await page.waitForSelector('input[name="displayLincolnInnId"]', {
+          state: "attached",
+          timeout: 10000,
+        });
+        await page.waitForFunction(
+          () => typeof (window as any).selectPlanGroupSet === "function",
+          { timeout: 10000 },
+        );
       }
 
       console.log(`[STEPB] On month: ${monthLabel}`);
