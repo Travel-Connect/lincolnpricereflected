@@ -571,18 +571,23 @@ export async function run(
       const currentVal = await monthSelectLocator.inputValue().catch(() => "");
       if (currentVal !== monthOptionValue) {
         console.log(`[STEPB] Selecting month: ${monthOptionValue}`);
-        await monthSelectLocator.selectOption(monthOptionValue);
 
-        // waitForNavigation: wait for doDisplay() POST navigation to complete
-        // waitForSelector(attached): verify DOM is rebuilt (hidden input, so "attached" not "visible")
-        // waitForFunction: ensure page JS is initialized before calling selectPlanGroupSet
+        // selectOption may trigger onchange→doDisplay() automatically,
+        // starting a navigation. The explicit evaluate(doDisplay) is a
+        // fallback in case onchange doesn't fire — but if the context is
+        // already destroyed by the auto-navigation, we ignore the error.
         await Promise.all([
           page.waitForNavigation({ waitUntil: "networkidle", timeout: 30000 }),
-          page.evaluate(() => {
-            if (typeof (window as any).doDisplay === "function") {
-              (window as any).doDisplay();
-            }
-          }),
+          (async () => {
+            await monthSelectLocator.selectOption(monthOptionValue);
+            await page.evaluate(() => {
+              if (typeof (window as any).doDisplay === "function") {
+                (window as any).doDisplay();
+              }
+            }).catch(() => {
+              // Context destroyed = onchange already triggered navigation — OK
+            });
+          })(),
         ]);
         await page.waitForSelector('input[name="displayLincolnInnId"]', {
           state: "attached",
