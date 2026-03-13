@@ -444,20 +444,21 @@ export async function run(
   };
   page.on("dialog", dialogHandler);
 
-  // 3b. Auto-close popup windows (doSend opens a popup after submission)
-  //     Use context.on("page") only — page.on("popup") fires for the same
-  //     popup causing duplicate close attempts and noisy logs.
-  const closedUrls = new Set<string>();
+  // 3b. Keep send popup open for reuse — Lincoln's window.open() uses a named
+  //     window, so keeping it open lets subsequent sends reuse it instead of
+  //     opening new windows (reduces context.on("page") events and context
+  //     destruction risk).
+  let sendPopup: import("playwright").Page | null = null;
   const contextPageHandler = async (newPage: import("playwright").Page) => {
     if (newPage !== page) {
-      const url = newPage.url();
-      if (!closedUrls.has(url)) {
-        closedUrls.add(url);
-        console.log(`[STEPB] Popup opened: ${url} — closing`);
-        // Clear after a short delay so we can detect the same popup re-opening later
-        setTimeout(() => closedUrls.delete(url), 2000);
+      if (!sendPopup) {
+        sendPopup = newPage;
+        console.log(`[STEPB] Send popup opened: ${newPage.url()} — keeping open for reuse`);
+      } else {
+        // Unexpected additional window → close it
+        console.log(`[STEPB] Unexpected popup: ${newPage.url()} — closing`);
+        await newPage.close().catch(() => {});
       }
-      await newPage.close().catch(() => {});
     }
   };
   page.context().on("page", contextPageHandler);
@@ -738,8 +739,20 @@ export async function run(
         await page.waitForTimeout(500);
       }
 
-      // Extra wait for popup to open and close
-      await page.waitForTimeout(1000);
+      // First send: wait for popup window to open (Lincoln opens it via window.open)
+      // Subsequent sends: window.open reuses the existing popup — no new page event
+      if (!sendPopup) {
+        const popupWaitStart = Date.now();
+        while (!sendPopup && Date.now() - popupWaitStart < 5000) {
+          await page.waitForTimeout(300);
+        }
+        if (sendPopup) {
+          console.log(`[STEPB] Send popup captured — will reuse for subsequent sends`);
+        }
+      } else {
+        // Existing popup gets updated by window.open — short wait is enough
+        await page.waitForTimeout(500);
+      }
       await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => {});
 
       // Log dialogs received during this send
@@ -825,6 +838,11 @@ export async function run(
 
   page.off("dialog", dialogHandler);
   page.context().off("page", contextPageHandler);
+  // Close the send popup now that STEPB is complete
+  if (sendPopup) {
+    console.log(`[STEPB] Closing send popup`);
+    await (sendPopup as import("playwright").Page).close().catch(() => {});
+  }
 
   const totalSends = copySourceGroups.length * months.length;
   console.log(
